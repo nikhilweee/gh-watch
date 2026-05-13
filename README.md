@@ -28,16 +28,16 @@ authenticated.
 
 ```bash
 # From inside a repo (uses current repo)
-gh watch 2143
+gh watch add 2143
 
 # With a full GitHub URL
-gh watch https://github.com/owner/repo/pull/2143
+gh watch add https://github.com/owner/repo/pull/2143
 
 # With an explicit repo
-gh watch 2143 --repo owner/repo
+gh watch add 2143 --repo owner/repo
 
 # Enable auto-merge (merges automatically once ready)
-gh watch 2143 --automerge
+gh watch add 2143 --automerge
 ```
 
 ### Open the dashboard
@@ -52,8 +52,8 @@ current status. The layout is responsive to terminal width.
 ### Remove a PR
 
 ```bash
-gh watch cancel 2143
-gh watch cancel https://github.com/owner/repo/pull/2143
+gh watch remove 2143
+gh watch remove https://github.com/owner/repo/pull/2143
 ```
 
 ### List watched PRs

@@ -18,11 +18,15 @@ type State struct {
 }
 
 func configPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(dir, "gh-watch", "state.json"), nil
+	return filepath.Join(base, "gh-watch", "state.json"), nil
 }
 
 func Load() (*State, error) {

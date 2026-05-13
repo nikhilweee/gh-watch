@@ -1,52 +1,25 @@
 package cmd
 
-import (
-	"fmt"
-	"os"
+import "github.com/alecthomas/kong"
 
-	tea "charm.land/bubbletea/v2"
-	"github.com/nikhilweee/gh-watch/internal/state"
-	"github.com/nikhilweee/gh-watch/internal/tui"
-	"github.com/spf13/cobra"
-)
+type CLI struct {
+	Repo string `short:"r" help:"Repository in owner/name format (defaults to current repo)" placeholder:"OWNER/NAME"`
 
-var rootCmd = &cobra.Command{
-	Use:   "gh-watch [pr-number]",
-	Short: "Watch PRs and auto-merge when ready",
-	Args:  cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 1 {
-			return addCmd.RunE(addCmd, args)
-		}
+	Add    AddCmd    `cmd:"" help:"Add a PR to the watchlist"`
+	Remove RemoveCmd `cmd:"" help:"Remove a PR from the watchlist"`
+	List   ListCmd   `cmd:"" help:"List all watched PRs"`
 
-		s, err := state.Load()
-		if err != nil {
-			return err
-		}
-
-		if len(s.Watches) == 0 {
-			fmt.Println("No PRs being watched. Run `gh watch <pr>` to add one.")
-			return nil
-		}
-
-		m := tui.New(s.Watches)
-		p := tea.NewProgram(m)
-		if _, err := p.Run(); err != nil {
-			return err
-		}
-		return nil
-	},
+	Dashboard DashboardCmd `cmd:"" default:"withargs" hidden:""`
 }
 
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
-}
-
-func init() {
-	rootCmd.PersistentFlags().StringP("repo", "r", "", "Repository in owner/name format (defaults to current repo)")
-	rootCmd.AddCommand(addCmd)
-	rootCmd.AddCommand(cancelCmd)
-	rootCmd.AddCommand(listCmd)
+	var cli CLI
+	ctx := kong.Parse(
+		&cli,
+		kong.Name("gh watch"),
+		kong.Description("Watch PRs and auto-merge when ready."),
+		kong.UsageOnError(),
+		kong.Bind(&cli),
+	)
+	ctx.FatalIfErrorf(ctx.Run())
 }
