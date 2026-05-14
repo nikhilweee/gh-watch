@@ -11,5 +11,5 @@ builds:
       - arm64
 
 archives:
-  - formats: [zip]
-    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+  - formats: [binary]
+    name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}-{{ .Arch }}"
