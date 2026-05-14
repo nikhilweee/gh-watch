@@ -6,12 +6,12 @@ all checks pass and approvals are in.
 ```
 gh watch
 
-  PR    STATUS   AUTO   TITLE                                    REVIEWS  CHECKS   UPDATED
-  18    ready         Add dark mode support to settings page    0/1/0    5/0/0       12s
- 253    ready   auto  Migrate auth tokens to Redis cache pool   2/0/0    3/2/0       12s
- 301   merged         Refactor auth middleware                  2/0/0   14/0/0        3m
+  PR    STATUS   AUTOMERGE  TITLE                                    REVIEWS  CHECKS   UPDATED
+  18    ready              Add dark mode support to settings page    0/1/0    5/0/0       12s
+ 253    ready    enabled   Migrate auth tokens to Redis cache pool   2/0/0    3/2/0       12s
+ 301   merged              Refactor auth middleware                  2/0/0   14/0/0        3m
 
-[↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [r] refresh  [s] settings  [o] open  [q] quit
+[↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [o] open  [r] refresh  [s] settings  [q] quit
 ```
 
 ## Installation
@@ -53,7 +53,7 @@ gh watch add 2143 --automerge
 gh watch
 ```
 
-Opens a live TUI that polls all watched PRs every 60 seconds and shows their
+Opens a live TUI that polls all watched PRs every 5 minutes by default and shows their
 current status. The layout is responsive to terminal width.
 
 ### Remove a PR
@@ -77,7 +77,7 @@ The dashboard shows a configurable set of columns. Available columns:
 | --------- | ---------------------------------------------------------------------------------------------- | ------- |
 | `PR`      | PR number                                                                                      | ✓       |
 | `STATUS`  | GitHub merge state (see below)                                                                 | ✓       |
-| `AUTO`    | `auto` when auto-merge is enabled, blank otherwise                                             | ✓       |
+| `AUTOMERGE` | `enabled` when auto-merge is on, blank otherwise                                             | ✓       |
 | `TITLE`   | PR title (truncated with `…` if the terminal is narrow)                                        | ✓       |
 | `AUTHOR`  | PR author login                                                                                |         |
 | `BASE`    | Target branch name                                                                             |         |
@@ -85,12 +85,12 @@ The dashboard shows a configurable set of columns. Available columns:
 | `CHECKS`  | Three counts in green / yellow / red: passed · running · failed. Zeros are muted.              | ✓       |
 | `UPDATED` | Time since the last poll                                                                       | ✓       |
 
-#### STATUS values
+### STATUS values
 
 | Value      | Color  | Meaning                                      |
 | ---------- | ------ | -------------------------------------------- |
 | `ready`    | green  | All requirements met — safe to merge         |
-| `blocked`  | red    | Required reviews or checks not yet satisfied |
+| `blocked`  | red    | Branch protection rules not satisfied (reviews, checks, or other policies) |
 | `conflict` | red    | Merge conflict must be resolved              |
 | `behind`   | yellow | Branch is behind the base branch             |
 | `unstable` | yellow | Non-required checks are failing              |
@@ -106,7 +106,7 @@ Column visibility, sort order, and poll interval are persisted to
 
 Press `s` to open the settings overlay. From there you can:
 
-- **Poll interval** — choose from 15s / 30s / 60s / 120s / 300s (`space` to
+- **Poll interval** — choose from 15s / 30s / 1m / 2m / 5m / 15m / 1h (`space` to
   select)
 - **Columns** — toggle visibility with `space`; reorder visible columns with
   `shift+↑/↓`
@@ -125,9 +125,9 @@ STATUS shows `ready`.
 | `a`            | Add a PR (enter a PR number or GitHub URL) |
 | `x`            | Remove the selected PR from the watchlist  |
 | `m`            | Toggle auto-merge on the selected PR       |
+| `o`            | Open the selected PR in a web browser      |
 | `r`            | Force refresh all PRs immediately          |
 | `s`            | Open settings                              |
-| `o`            | Open the selected PR in a web browser      |
 | `q` / `Ctrl+C` | Quit                                       |
 
 ## Auto-merge
