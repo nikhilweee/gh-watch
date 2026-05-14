@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,35 @@ const (
 	rowError
 )
 
+type uiMode int
+
+const (
+	modeNormal uiMode = iota
+	modeAdding
+	modePicking
+	modeSorting
+)
+
+type columnDef struct {
+	id       string
+	header   string
+	center   bool
+	sortable bool
+}
+
+var allColumns = []columnDef{
+	{"PR", "PR", true, true},
+	{"STATUS", "STATUS", true, false},
+	{"AUTO", "AUTO", true, false},
+	{"TITLE", "TITLE", false, true},
+	{"AUTHOR", "AUTHOR", false, true},
+	{"BASE", "BASE", false, true},
+	{"DRAFT", "DRAFT", true, false},
+	{"REVIEWS", "REVIEWS", true, true},
+	{"CHECKS", "CHECKS", true, true},
+	{"UPDATED", "UPDATED", true, true},
+}
+
 type watchRow struct {
 	watch  state.Watch
 	result *gh.PollResult
@@ -53,14 +83,33 @@ type mergeDoneMsg struct {
 type tickMsg time.Time
 
 type Model struct {
-	rows     []watchRow
-	cursor   int
-	spinner  spinner.Model
-	input    textinput.Model
-	adding   bool
-	inputErr string
-	width    int
-	quitting bool
+	rows         []watchRow
+	cursor       int
+	spinner      spinner.Model
+	input        textinput.Model
+	mode         uiMode
+	inputErr     string
+	width        int
+	quitting     bool
+	columns      []columnDef
+	sortBy       string
+	sortDesc     bool
+	pickerDraft  []string
+	pickerCursor int
+}
+
+func columnsFromIDs(ids []string) []columnDef {
+	active := map[string]bool{"PR": true} // PR is always visible
+	for _, id := range ids {
+		active[id] = true
+	}
+	var cols []columnDef
+	for _, c := range allColumns {
+		if active[c.id] {
+			cols = append(cols, c)
+		}
+	}
+	return cols
 }
 
 func New(watches []state.Watch) Model {
@@ -70,11 +119,20 @@ func New(watches []state.Watch) Model {
 	ti := textinput.New()
 	ti.CharLimit = 200
 
+	cfg, _ := state.LoadConfig()
+
 	rows := make([]watchRow, len(watches))
 	for i, w := range watches {
 		rows[i] = watchRow{watch: w, state: rowPolling}
 	}
-	return Model{rows: rows, spinner: s, input: ti}
+	return Model{
+		rows:     rows,
+		spinner:  s,
+		input:    ti,
+		columns:  columnsFromIDs(cfg.Columns),
+		sortBy:   cfg.SortBy,
+		sortDesc: cfg.SortDesc,
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -95,18 +153,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 
 	case tea.KeyPressMsg:
-		// Input mode: intercept keys for the text field
-		if m.adding {
+		switch m.mode {
+		case modeAdding:
 			switch msg.String() {
 			case "esc":
-				m.adding = false
+				m.mode = modeNormal
 				m.inputErr = ""
 				m.input.SetValue("")
 				return m, nil
 			case "enter":
 				val := strings.TrimSpace(m.input.Value())
 				if val == "" {
-					m.adding = false
+					m.mode = modeNormal
 					return m, nil
 				}
 				repo, prNum, err := gh.ResolveRepo(val, "")
@@ -116,7 +174,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				w := state.Watch{PR: prNum, Repo: repo}
 				m.rows = append(m.rows, watchRow{watch: w, state: rowPolling})
-				m.adding = false
+				m.mode = modeNormal
 				m.inputErr = ""
 				m.input.SetValue("")
 				return m, tea.Batch(addToState(w), pollCmd(w))
@@ -126,63 +184,141 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inputErr = ""
 				return m, cmd
 			}
-		}
 
-		switch msg.String() {
-		case "q", "ctrl+c":
-			m.quitting = true
-			return m, tea.Quit
-		case "a":
-			m.adding = true
-			m.inputErr = ""
-			m.input.SetValue("")
-			return m, m.input.Focus()
-		case "r":
-			var cmds []tea.Cmd
-			for i := range m.rows {
-				if m.rows[i].state != rowMerging {
-					m.rows[i].state = rowPolling
-					cmds = append(cmds, pollCmd(m.rows[i].watch))
+		case modePicking:
+			switch msg.String() {
+			case "esc":
+				m.mode = modeNormal
+				return m, nil
+			case "enter":
+				m.columns = columnsFromIDs(m.pickerDraft)
+				m.mode = modeNormal
+				cfg := state.Config{Columns: m.pickerDraft, SortBy: m.sortBy, SortDesc: m.sortDesc}
+				return m, saveConfigCmd(cfg)
+			case "up", "k":
+				if m.pickerCursor > 0 {
+					m.pickerCursor--
+				}
+			case "down", "j":
+				if m.pickerCursor < len(allColumns)-1 {
+					m.pickerCursor++
+				}
+			case "space":
+				id := allColumns[m.pickerCursor].id
+				if id == "PR" {
+					break
+				}
+				found := false
+				for i, v := range m.pickerDraft {
+					if v == id {
+						m.pickerDraft = append(m.pickerDraft[:i], m.pickerDraft[i+1:]...)
+						found = true
+						break
+					}
+				}
+				if !found {
+					m.pickerDraft = append(m.pickerDraft, id)
 				}
 			}
-			return m, tea.Batch(cmds...)
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.rows)-1 {
-				m.cursor++
-			}
-		case "x":
-			if len(m.rows) > 0 {
-				w := m.rows[m.cursor].watch
-				m.rows = append(m.rows[:m.cursor], m.rows[m.cursor+1:]...)
-				if m.cursor >= len(m.rows) && m.cursor > 0 {
-					m.cursor--
+			return m, nil
+
+		case modeSorting:
+			sortable := sortableColumns()
+			switch msg.String() {
+			case "esc", "enter":
+				m.mode = modeNormal
+				return m, nil
+			case "up", "k":
+				if m.pickerCursor > 0 {
+					m.pickerCursor--
 				}
-				return m, removeFromState(w)
+			case "down", "j":
+				if m.pickerCursor < len(sortable) {
+					m.pickerCursor++
+				}
+			case "space":
+				var id string
+				if m.pickerCursor > 0 {
+					id = sortable[m.pickerCursor-1].id
+				}
+				if id == m.sortBy && id != "" {
+					m.sortDesc = !m.sortDesc
+				} else {
+					m.sortBy = id
+					m.sortDesc = false
+				}
+				m.sortRows()
+				cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc}
+				return m, saveConfigCmd(cfg)
 			}
-		case "o":
-			if len(m.rows) > 0 {
-				w := m.rows[m.cursor].watch
-				return m, openInBrowserCmd(w)
-			}
-		case "m":
-			if len(m.rows) > 0 {
-				m.rows[m.cursor].watch.AutoMerge = !m.rows[m.cursor].watch.AutoMerge
-				w := m.rows[m.cursor].watch
-				cmds := []tea.Cmd{setAutoMergeInState(w)}
-				if w.AutoMerge && m.rows[m.cursor].result != nil && m.rows[m.cursor].result.IsReady() {
-					m.rows[m.cursor].state = rowMerging
-					cmds = append(cmds, mergeCmd(w, m.rows[m.cursor].result.PR.NodeID))
+			return m, nil
+
+		default: // modeNormal
+			switch msg.String() {
+			case "q", "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			case "a":
+				m.mode = modeAdding
+				m.inputErr = ""
+				m.input.SetValue("")
+				return m, m.input.Focus()
+			case "c":
+				m.mode = modePicking
+				m.pickerDraft = columnIDs(m.columns)
+				m.pickerCursor = 0
+				return m, nil
+			case "s":
+				m.mode = modeSorting
+				m.pickerCursor = sortCursorFor(m.sortBy)
+				return m, nil
+			case "r":
+				var cmds []tea.Cmd
+				for i := range m.rows {
+					if m.rows[i].state != rowMerging {
+						m.rows[i].state = rowPolling
+						cmds = append(cmds, pollCmd(m.rows[i].watch))
+					}
 				}
 				return m, tea.Batch(cmds...)
+			case "up", "k":
+				if m.cursor > 0 {
+					m.cursor--
+				}
+			case "down", "j":
+				if m.cursor < len(m.rows)-1 {
+					m.cursor++
+				}
+			case "x":
+				if len(m.rows) > 0 {
+					w := m.rows[m.cursor].watch
+					m.rows = append(m.rows[:m.cursor], m.rows[m.cursor+1:]...)
+					if m.cursor >= len(m.rows) && m.cursor > 0 {
+						m.cursor--
+					}
+					return m, removeFromState(w)
+				}
+			case "o":
+				if len(m.rows) > 0 {
+					w := m.rows[m.cursor].watch
+					return m, openInBrowserCmd(w)
+				}
+			case "m":
+				if len(m.rows) > 0 {
+					m.rows[m.cursor].watch.AutoMerge = !m.rows[m.cursor].watch.AutoMerge
+					w := m.rows[m.cursor].watch
+					cmds := []tea.Cmd{setAutoMergeInState(w)}
+					if w.AutoMerge && m.rows[m.cursor].result != nil && m.rows[m.cursor].result.IsReady() {
+						m.rows[m.cursor].state = rowMerging
+						cmds = append(cmds, mergeCmd(w, m.rows[m.cursor].result.PR.NodeID))
+					}
+					return m, tea.Batch(cmds...)
+				}
 			}
 		}
 
 	default:
-		if m.adding {
+		if m.mode == modeAdding {
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
 			return m, cmd
@@ -221,10 +357,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.result.PR.State {
 			case "MERGED":
 				m.rows[i].state = rowMerged
-				break
 			case "CLOSED":
 				m.rows[i].state = rowClosed
-				break
 			default:
 				if msg.result.IsReady() && w.AutoMerge {
 					m.rows[i].state = rowMerging
@@ -232,6 +366,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.rows[i].state = rowReady
 			}
+			m.sortRows()
 			break
 		}
 
@@ -261,40 +396,127 @@ func (m Model) View() tea.View {
 
 	var inner strings.Builder
 
-	if len(m.rows) == 0 {
-		inner.WriteString(styleMuted.Render("No PRs being watched. Press 'a' to add one."))
-	} else {
-		tbl := table.New().
-			Border(lipgloss.HiddenBorder()).
-			BorderTop(false).BorderBottom(false).
-			BorderLeft(false).BorderRight(false).
-			BorderColumn(false).BorderRow(false).BorderHeader(false).
-			Headers("PR", "STATUS", "AUTO", "TITLE", "REVIEWS", "CHECKS", "UPDATED").
-			StyleFunc(func(row, col int) lipgloss.Style {
-				s := lipgloss.NewStyle().Padding(0, 1)
-				if row == table.HeaderRow {
-					return s.Bold(true).Faint(true).Align(lipgloss.Center)
-				}
-				if row == m.cursor {
-					s = s.Background(selectedBg)
-				}
-				switch col {
-				case 0:
-					s = s.Bold(true)
-				case 1, 4, 5, 6:
-					s = s.Align(lipgloss.Center)
-				}
-				return s
-			})
-		for i, row := range m.rows {
-			tbl = tbl.Row(m.rowCells(row, i == m.cursor)...)
+	switch m.mode {
+	case modePicking:
+		inner.WriteString(styleBold.Render("Select columns") + "\n\n")
+		activeSet := map[string]bool{}
+		for _, id := range m.pickerDraft {
+			activeSet[id] = true
 		}
-		inner.WriteString(tbl.Render())
+		for i, c := range allColumns {
+			locked := c.id == "PR"
+			cursor := "  "
+			if i == m.pickerCursor {
+				cursor = styleGreen.Render("▶ ")
+			}
+			var check, label string
+			if locked {
+				check = styleMuted.Render("[x]")
+				label = styleMuted.Render(c.header)
+			} else if activeSet[c.id] {
+				check = styleGreen.Render("[x]")
+				label = c.header
+			} else {
+				check = styleMuted.Render("[ ]")
+				label = c.header
+			}
+			inner.WriteString(fmt.Sprintf("%s%s  %s\n", cursor, check, label))
+		}
+
+	case modeSorting:
+		inner.WriteString(styleBold.Render("Sort by") + "\n\n")
+		sortable := sortableColumns()
+		visibleCols := map[string]bool{}
+		for _, c := range m.columns {
+			visibleCols[c.id] = true
+		}
+		entries := append([]string{"None"}, func() []string {
+			names := make([]string, len(sortable))
+			for i, c := range sortable {
+				names[i] = c.header
+			}
+			return names
+		}()...)
+		for i, name := range entries {
+			cursor := "  "
+			if i == m.pickerCursor {
+				cursor = styleGreen.Render("▶ ")
+			}
+			var id string
+			if i > 0 {
+				id = sortable[i-1].id
+			}
+			hidden := id != "" && !visibleCols[id]
+			label := name
+			if id == m.sortBy && m.sortBy != "" {
+				if m.sortDesc {
+					label += " ↓"
+				} else {
+					label += " ↑"
+				}
+				label = styleGreen.Render(label)
+			} else if hidden {
+				label = styleMuted.Render(label)
+			}
+			inner.WriteString(fmt.Sprintf("%s%s\n", cursor, label))
+		}
+
+	default:
+		if len(m.rows) == 0 {
+			inner.WriteString(styleMuted.Render("No PRs being watched. Press 'a' to add one."))
+		} else {
+			headers := make([]string, len(m.columns))
+			for i, c := range m.columns {
+				h := c.header
+				if c.id == m.sortBy && m.sortBy != "" {
+					if m.sortDesc {
+						h += " ↓"
+					} else {
+						h += " ↑"
+					}
+				}
+				headers[i] = h
+			}
+			tbl := table.New().
+				Border(lipgloss.HiddenBorder()).
+				BorderTop(false).BorderBottom(false).
+				BorderLeft(false).BorderRight(false).
+				BorderColumn(false).BorderRow(false).BorderHeader(false).
+				Headers(headers...).
+				StyleFunc(func(row, col int) lipgloss.Style {
+					s := lipgloss.NewStyle().Padding(0, 1)
+					if row == table.HeaderRow {
+						return s.Bold(true).Faint(true).Align(lipgloss.Center)
+					}
+					if row == m.cursor {
+						s = s.Background(selectedBg)
+					}
+					if col >= 0 && col < len(m.columns) {
+						c := m.columns[col]
+						if c.id == "PR" {
+							s = s.Bold(true)
+						}
+						if c.center {
+							s = s.Align(lipgloss.Center)
+						}
+					}
+					return s
+				})
+			for i, row := range m.rows {
+				cells := make([]string, len(m.columns))
+				for j, col := range m.columns {
+					cells[j] = m.cellValue(row, col, i == m.cursor)
+				}
+				tbl = tbl.Row(cells...)
+			}
+			inner.WriteString(tbl.Render())
+		}
 	}
 
 	// footer
 	var footer strings.Builder
-	if m.adding {
+	switch m.mode {
+	case modeAdding:
 		hint := ""
 		if m.input.Value() == "" {
 			hint = styleMuted.Render("PR number or GitHub URL")
@@ -304,8 +526,12 @@ func (m Model) View() tea.View {
 			footer.WriteString("  " + styleRed.Render(m.inputErr))
 		}
 		footer.WriteString("\n" + styleHelp.Render("[enter] confirm  [esc] cancel"))
-	} else {
-		footer.WriteString(styleHelp.Render("[↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [r] refresh   [o] open in browser   [q] quit"))
+	case modePicking:
+		footer.WriteString(styleHelp.Render("[space] toggle  [enter] confirm  [esc] cancel"))
+	case modeSorting:
+		footer.WriteString(styleHelp.Render("[space] sort · space again to reverse  [enter/esc] close"))
+	default:
+		footer.WriteString(styleHelp.Render("[↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [r] refresh  [c] columns  [s] sort  [o] open  [q] quit"))
 	}
 
 	var b strings.Builder
@@ -319,80 +545,195 @@ func (m Model) View() tea.View {
 	return v
 }
 
-// rowCells returns the 7 cells for a watch row in column order:
-// PR, STATUS, AUTO, TITLE, REVIEWS, CHECKS, UPDATED.
-func (m Model) rowCells(row watchRow, selected bool) []string {
-	prNum := fmt.Sprintf("%d", row.watch.PR)
+func (m Model) cellValue(row watchRow, col columnDef, selected bool) string {
+	prevMerged := row.result != nil && row.result.PR.State == "MERGED"
+	prevClosed := row.result != nil && row.result.PR.State == "CLOSED"
+	dim := row.state == rowMerged || row.state == rowClosed ||
+		(row.state == rowPolling && (prevMerged || prevClosed))
+	r := row.result
 
-	var status, auto, title, reviews, checks, updated string
-
-	switch row.state {
-	case rowMerged:
-		prNum = styleMuted.Render(prNum)
-		status = styleMuted.Render("merged")
-		if row.result != nil {
-			r := row.result
-			title = styleMuted.Render(truncate(r.PR.Title, m.titleMaxWidth()))
-			reviews = styleMuted.Render(fmt.Sprintf("%d/%d/%d", r.ApprovedReviews, r.PendingReviews, r.ChangesReviews))
-			checks = styleMuted.Render(fmt.Sprintf("%d/%d/%d", r.PassedChecks, r.RunningChecks, r.FailedChecks))
-			if !row.lastAt.IsZero() {
-				updated = styleMuted.Render(formatDuration(time.Since(row.lastAt)))
-			}
+	switch col.id {
+	case "PR":
+		s := fmt.Sprintf("%d", row.watch.PR)
+		if row.state == rowPolling {
+			return m.spinner.View()
 		}
-
-	case rowClosed:
-		prNum = styleMuted.Render(prNum)
-		status = styleMuted.Render("closed")
-		if row.result != nil {
-			r := row.result
-			title = styleMuted.Render(truncate(r.PR.Title, m.titleMaxWidth()))
-			reviews = styleMuted.Render(fmt.Sprintf("%d/%d/%d", r.ApprovedReviews, r.PendingReviews, r.ChangesReviews))
-			checks = styleMuted.Render(fmt.Sprintf("%d/%d/%d", r.PassedChecks, r.RunningChecks, r.FailedChecks))
-			if !row.lastAt.IsZero() {
-				updated = styleMuted.Render(formatDuration(time.Since(row.lastAt)))
-			}
+		if dim {
+			return styleMuted.Render(s)
 		}
+		return s
 
-	case rowPolling, rowReady, rowMerging:
-		if row.result == nil {
+	case "STATUS":
+		if dim {
+			if row.state == rowMerged || prevMerged {
+				return styleMuted.Render("merged")
+			}
+			return styleMuted.Render("closed")
+		}
+		if row.state == rowError {
+			return styleRed.Render("error")
+		}
+		if r == nil {
+			return ""
+		}
+		return readinessLabel(r, selected)
+
+	case "AUTO":
+		if dim || !row.watch.AutoMerge {
+			return ""
+		}
+		return styleYellow.Render("auto")
+
+	case "TITLE":
+		if row.state == rowError && row.err != nil {
+			return styleMuted.Render(row.err.Error())
+		}
+		if r == nil {
 			if row.state == rowPolling {
-				title = m.spinner.View()
+				return m.spinner.View()
 			}
-			break
+			return ""
 		}
-		status = readinessLabel(row.result, selected)
-		if row.watch.AutoMerge {
-			auto = styleYellow.Render("auto")
+		title := truncate(r.PR.Title, m.titleMaxWidth())
+		if dim {
+			return styleMuted.Render(title)
 		}
-		title = truncate(row.result.PR.Title, m.titleMaxWidth())
-		reviews = reviewsLabel(row.result, selected)
-		if row.state == rowMerging {
-			checks = styleYellow.Render("merging " + m.spinner.View())
-		} else {
-			checks = checksLabel(row.result, selected)
-		}
-		switch {
-		case row.state == rowPolling:
-			updated = m.spinner.View()
-		case !row.lastAt.IsZero():
-			updated = styleMuted.Render(formatDuration(time.Since(row.lastAt)))
-		}
+		return title
 
-	case rowError:
-		status = colorDot(styleRed, selected)
-		if row.err != nil {
-			title = styleMuted.Render(row.err.Error())
+	case "AUTHOR":
+		if r == nil {
+			return ""
 		}
+		if dim {
+			return styleMuted.Render(r.PR.Author)
+		}
+		return r.PR.Author
+
+	case "BASE":
+		if r == nil {
+			return ""
+		}
+		if dim {
+			return styleMuted.Render(r.PR.BaseRefName)
+		}
+		return r.PR.BaseRefName
+
+	case "DRAFT":
+		if r == nil || !r.PR.IsDraft {
+			return ""
+		}
+		if dim {
+			return styleMuted.Render("draft")
+		}
+		return styleYellow.Render("draft")
+
+	case "REVIEWS":
+		if r == nil {
+			return ""
+		}
+		if dim {
+			return styleMuted.Render(fmt.Sprintf("%d/%d/%d", r.ApprovedReviews, r.PendingReviews, r.ChangesReviews))
+		}
+		return reviewsLabel(r, selected)
+
+	case "CHECKS":
+		if r == nil {
+			return ""
+		}
+		if row.state == rowMerging {
+			return styleYellow.Render("merging " + m.spinner.View())
+		}
+		if dim {
+			return styleMuted.Render(fmt.Sprintf("%d/%d/%d", r.PassedChecks, r.RunningChecks, r.FailedChecks))
+		}
+		return checksLabel(r, selected)
+
+	case "UPDATED":
+		if row.lastAt.IsZero() {
+			if row.state == rowPolling {
+				return m.spinner.View()
+			}
+			return ""
+		}
+		return styleMuted.Render(formatDuration(time.Since(row.lastAt)))
 	}
 
-	return []string{prNum, status, auto, title, reviews, checks, updated}
+	return ""
+}
+
+func (m *Model) sortRows() {
+	if m.sortBy == "" {
+		return
+	}
+	sort.SliceStable(m.rows, func(i, j int) bool {
+		iDone := m.rows[i].state == rowMerged || m.rows[i].state == rowClosed
+		jDone := m.rows[j].state == rowMerged || m.rows[j].state == rowClosed
+		if iDone != jDone {
+			return !iDone
+		}
+		ri := m.rows[i].result
+		rj := m.rows[j].result
+		if ri == nil || rj == nil {
+			return ri != nil
+		}
+		var less bool
+		switch m.sortBy {
+		case "PR":
+			less = m.rows[i].watch.PR < m.rows[j].watch.PR
+		case "TITLE":
+			less = ri.PR.Title < rj.PR.Title
+		case "AUTHOR":
+			less = ri.PR.Author < rj.PR.Author
+		case "BASE":
+			less = ri.PR.BaseRefName < rj.PR.BaseRefName
+		case "REVIEWS":
+			less = ri.ApprovedReviews < rj.ApprovedReviews
+		case "CHECKS":
+			less = ri.PassedChecks < rj.PassedChecks
+		case "UPDATED":
+			less = m.rows[i].lastAt.Before(m.rows[j].lastAt)
+		}
+		if m.sortDesc {
+			return !less
+		}
+		return less
+	})
+}
+
+func sortableColumns() []columnDef {
+	var out []columnDef
+	for _, c := range allColumns {
+		if c.sortable {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func sortCursorFor(sortBy string) int {
+	if sortBy == "" {
+		return 0
+	}
+	for i, c := range sortableColumns() {
+		if c.id == sortBy {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+func columnIDs(cols []columnDef) []string {
+	ids := make([]string, len(cols))
+	for i, c := range cols {
+		ids[i] = c.id
+	}
+	return ids
 }
 
 func (m Model) titleMaxWidth() int {
 	if m.width <= 0 {
 		return 60
 	}
-	// rough budget for the other 6 columns + table padding (2 chars per side per col)
 	max := m.width - 70
 	if max < 20 {
 		max = 20
@@ -527,6 +868,13 @@ func removeFromState(w state.Watch) tea.Cmd {
 
 func setAutoMergeInState(w state.Watch) tea.Cmd {
 	return mutateState(func(s *state.State) { s.SetAutoMerge(w.PR, w.Repo, w.AutoMerge) })
+}
+
+func saveConfigCmd(cfg state.Config) tea.Cmd {
+	return func() tea.Msg {
+		_ = state.SaveConfig(cfg)
+		return nil
+	}
 }
 
 func formatDuration(d time.Duration) string {

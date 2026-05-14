@@ -19,6 +19,8 @@ type PRStatus struct {
 	ReviewDecision   string `json:"reviewDecision"`
 	MergeStateStatus string `json:"mergeStateStatus"`
 	Mergeable        string `json:"mergeable"`
+	Author           string
+	BaseRefName      string `json:"baseRefName"`
 }
 
 type PollResult struct {
@@ -54,6 +56,10 @@ func GetPRStatus(repo string, prNumber int) (*PollResult, error) {
 				ReviewDecision   string `json:"reviewDecision"`
 				MergeStateStatus string `json:"mergeStateStatus"`
 				Mergeable        string `json:"mergeable"`
+				BaseRefName      string `json:"baseRefName"`
+				Author           struct {
+					Login string `json:"login"`
+				} `json:"author"`
 				LatestReviews    struct {
 					Nodes []struct {
 						State string `json:"state"`
@@ -87,7 +93,8 @@ func GetPRStatus(repo string, prNumber int) (*PollResult, error) {
 		query($owner: String!, $name: String!, $number: Int!) {
 			repository(owner: $owner, name: $name) {
 				pullRequest(number: $number) {
-					id number title state isDraft reviewDecision mergeStateStatus mergeable
+					id number title state isDraft reviewDecision mergeStateStatus mergeable baseRefName
+					author { login }
 					latestReviews(first: 50) {
 						nodes { state }
 					}
@@ -131,6 +138,8 @@ func GetPRStatus(repo string, prNumber int) (*PollResult, error) {
 			ReviewDecision:   pr.ReviewDecision,
 			MergeStateStatus: pr.MergeStateStatus,
 			Mergeable:        pr.Mergeable,
+			Author:           pr.Author.Login,
+			BaseRefName:      pr.BaseRefName,
 		},
 		ChecksState:    "UNKNOWN",
 		PendingReviews: pr.ReviewRequests.TotalCount,

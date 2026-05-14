@@ -17,7 +17,7 @@ type State struct {
 	Watches []Watch `json:"watches"`
 }
 
-func configPath() (string, error) {
+func configDir() (string, error) {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
@@ -26,7 +26,73 @@ func configPath() (string, error) {
 		}
 		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(base, "gh-watch", "state.json"), nil
+	return filepath.Join(base, "gh-watch"), nil
+}
+
+func configPath() (string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "state.json"), nil
+}
+
+// Config holds user preferences persisted to config.json.
+type Config struct {
+	Columns  []string `json:"columns,omitempty"`
+	SortBy   string   `json:"sortBy,omitempty"`
+	SortDesc bool     `json:"sortDesc,omitempty"`
+}
+
+var DefaultColumns = []string{"PR", "STATUS", "AUTO", "TITLE", "REVIEWS", "CHECKS", "UPDATED"}
+
+func configFilePath() (string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
+}
+
+func LoadConfig() (Config, error) {
+	path, err := configFilePath()
+	if err != nil {
+		return Config{}, err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return Config{Columns: DefaultColumns}, nil
+	}
+	if err != nil {
+		return Config{}, err
+	}
+	var c Config
+	if err := json.Unmarshal(data, &c); err != nil {
+		return Config{}, err
+	}
+	if len(c.Columns) == 0 {
+		c.Columns = DefaultColumns
+	}
+	return c, nil
+}
+
+func SaveConfig(c Config) error {
+	path, err := configFilePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func Load() (*State, error) {

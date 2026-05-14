@@ -64,20 +64,25 @@ gh watch list
 
 ## Dashboard
 
-The dashboard is a 7-column table:
+The dashboard shows a configurable set of columns. Available columns:
 
-| Column    | Meaning                                                                                        |
-| --------- | ---------------------------------------------------------------------------------------------- |
-| `PR`      | PR number                                                                                      |
-| `STATUS`  | Merge readiness — green: `ready` · yellow: `pending` · red: `action`                           |
-| `AUTO`    | `auto` when auto-merge is enabled, blank otherwise                                             |
-| `TITLE`   | PR title (truncated with `…` if the terminal is narrow)                                        |
-| `REVIEWS` | Three counts in green / yellow / red: approved · pending · changes-requested. Zeros are muted. |
-| `CHECKS`  | Three counts in green / yellow / red: passed · running · failed. Zeros are muted.              |
-| `UPDATED` | Time since the last poll                                                                       |
+| Column    | Meaning                                                                                        | Default |
+| --------- | ---------------------------------------------------------------------------------------------- | ------- |
+| `PR`      | PR number                                                                                      | ✓       |
+| `STATUS`  | Merge readiness — green: `ready` · yellow: `pending` · red: `action`                           | ✓       |
+| `AUTO`    | `auto` when auto-merge is enabled, blank otherwise                                             | ✓       |
+| `TITLE`   | PR title (truncated with `…` if the terminal is narrow)                                        | ✓       |
+| `AUTHOR`  | PR author login                                                                                |         |
+| `BASE`    | Target branch name                                                                             |         |
+| `DRAFT`   | Shows `draft` when the PR is a draft                                                           |         |
+| `REVIEWS` | Three counts in green / yellow / red: approved · pending · changes-requested. Zeros are muted. | ✓       |
+| `CHECKS`  | Three counts in green / yellow / red: passed · running · failed. Zeros are muted.              | ✓       |
+| `UPDATED` | Time since the last poll                                                                       | ✓       |
 
 Merged and closed PRs remain in the list with all columns dimmed until manually
 removed with `x`.
+
+Column visibility and sort order are persisted to `~/.config/gh-watch/config.json`.
 
 When auto-merge is enabled for a PR, the dashboard merges it as soon as it's
 approved, mergeable, and CI is green.
@@ -92,6 +97,8 @@ approved, mergeable, and CI is green.
 | `x`            | Remove the selected PR from the watchlist  |
 | `m`            | Toggle auto-merge on the selected PR       |
 | `r`            | Force refresh all PRs immediately          |
+| `c`            | Open column picker (toggle columns on/off) |
+| `s`            | Open sort picker                           |
 | `o`            | Open the selected PR in a web browser      |
 | `q` / `Ctrl+C` | Quit                                       |
 
@@ -107,9 +114,7 @@ merges the PR as soon as all of the following are true:
 
 ## State
 
-Watched PRs are stored in `~/.config/gh-watch/state.json`. The file is written
-atomically and persists across sessions. PRs are automatically removed from the
-watchlist once they are merged or closed.
+Watched PRs are stored in `~/.config/gh-watch/state.json`. Column and sort preferences are stored in `~/.config/gh-watch/config.json`. Both files are written atomically and persist across sessions.
 
 ## Local development
 
