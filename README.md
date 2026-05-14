@@ -6,9 +6,9 @@ all checks pass and approvals are in.
 ```
 gh watch
 
-  PR    READY  AUTO   TITLE                                    REVIEWS  CHECKS   UPDATED
-  18      ●           Add dark mode support to settings page    0/1/0    5/0/0       12s
- 253      ●    auto   Migrate auth tokens to Redis cache pool   2/0/0    3/2/0       12s
+  PR    STATUS   AUTO   TITLE                                    REVIEWS  CHECKS   UPDATED
+  18    ready         Add dark mode support to settings page    0/1/0    5/0/0       12s
+ 253    ready   auto  Migrate auth tokens to Redis cache pool   2/0/0    3/2/0       12s
 
 [↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [r] refresh   [o] open in browser   [q] quit
 ```
@@ -69,12 +69,15 @@ The dashboard is a 7-column table:
 | Column    | Meaning                                                                                        |
 | --------- | ---------------------------------------------------------------------------------------------- |
 | `PR`      | PR number                                                                                      |
-| `READY`   | Merge readiness — green: ready · yellow: pending · red: needs your attention                   |
+| `STATUS`  | Merge readiness — green: `ready` · yellow: `pending` · red: `action`                           |
 | `AUTO`    | `auto` when auto-merge is enabled, blank otherwise                                             |
 | `TITLE`   | PR title (truncated with `…` if the terminal is narrow)                                        |
 | `REVIEWS` | Three counts in green / yellow / red: approved · pending · changes-requested. Zeros are muted. |
 | `CHECKS`  | Three counts in green / yellow / red: passed · running · failed. Zeros are muted.              |
 | `UPDATED` | Time since the last poll                                                                       |
+
+Merged and closed PRs remain in the list with all columns dimmed until manually
+removed with `x`.
 
 When auto-merge is enabled for a PR, the dashboard merges it as soon as it's
 approved, mergeable, and CI is green.
@@ -114,5 +117,6 @@ watchlist once they are merged or closed.
 git clone https://github.com/nikhilweee/gh-watch
 cd gh-watch
 go build -o gh-watch .
+gh extension remove watch  # if already installed
 gh extension install .
 ```

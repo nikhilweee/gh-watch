@@ -221,16 +221,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.result.PR.State {
 			case "MERGED":
 				m.rows[i].state = rowMerged
-				return m, removeFromState(w)
+				break
 			case "CLOSED":
 				m.rows[i].state = rowClosed
-				return m, removeFromState(w)
+				break
+			default:
+				if msg.result.IsReady() && w.AutoMerge {
+					m.rows[i].state = rowMerging
+					return m, mergeCmd(w, msg.result.PR.NodeID)
+				}
+				m.rows[i].state = rowReady
 			}
-			if msg.result.IsReady() && w.AutoMerge {
-				m.rows[i].state = rowMerging
-				return m, mergeCmd(w, msg.result.PR.NodeID)
-			}
-			m.rows[i].state = rowReady
 			break
 		}
 
@@ -245,7 +246,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rows[i].err = msg.err
 			} else {
 				m.rows[i].state = rowMerged
-				return m, removeFromState(w)
 			}
 			break
 		}
@@ -269,7 +269,7 @@ func (m Model) View() tea.View {
 			BorderTop(false).BorderBottom(false).
 			BorderLeft(false).BorderRight(false).
 			BorderColumn(false).BorderRow(false).BorderHeader(false).
-			Headers("PR", "READY", "AUTO", "TITLE", "REVIEWS", "CHECKS", "UPDATED").
+			Headers("PR", "STATUS", "AUTO", "TITLE", "REVIEWS", "CHECKS", "UPDATED").
 			StyleFunc(func(row, col int) lipgloss.Style {
 				s := lipgloss.NewStyle().Padding(0, 1)
 				if row == table.HeaderRow {
@@ -327,6 +327,32 @@ func (m Model) rowCells(row watchRow, selected bool) []string {
 	var status, auto, title, reviews, checks, updated string
 
 	switch row.state {
+	case rowMerged:
+		prNum = styleMuted.Render(prNum)
+		status = styleMuted.Render("merged")
+		if row.result != nil {
+			r := row.result
+			title = styleMuted.Render(truncate(r.PR.Title, m.titleMaxWidth()))
+			reviews = styleMuted.Render(fmt.Sprintf("%d/%d/%d", r.ApprovedReviews, r.PendingReviews, r.ChangesReviews))
+			checks = styleMuted.Render(fmt.Sprintf("%d/%d/%d", r.PassedChecks, r.RunningChecks, r.FailedChecks))
+			if !row.lastAt.IsZero() {
+				updated = styleMuted.Render(formatDuration(time.Since(row.lastAt)))
+			}
+		}
+
+	case rowClosed:
+		prNum = styleMuted.Render(prNum)
+		status = styleMuted.Render("closed")
+		if row.result != nil {
+			r := row.result
+			title = styleMuted.Render(truncate(r.PR.Title, m.titleMaxWidth()))
+			reviews = styleMuted.Render(fmt.Sprintf("%d/%d/%d", r.ApprovedReviews, r.PendingReviews, r.ChangesReviews))
+			checks = styleMuted.Render(fmt.Sprintf("%d/%d/%d", r.PassedChecks, r.RunningChecks, r.FailedChecks))
+			if !row.lastAt.IsZero() {
+				updated = styleMuted.Render(formatDuration(time.Since(row.lastAt)))
+			}
+		}
+
 	case rowPolling, rowReady, rowMerging:
 		if row.result == nil {
 			if row.state == rowPolling {
@@ -352,14 +378,6 @@ func (m Model) rowCells(row watchRow, selected bool) []string {
 			updated = styleMuted.Render(formatDuration(time.Since(row.lastAt)))
 		}
 
-	case rowMerged:
-		status = colorDot(styleGreen, selected)
-		title = styleMuted.Render("merged")
-
-	case rowClosed:
-		status = colorDot(styleRed, selected)
-		title = styleMuted.Render("closed")
-
 	case rowError:
 		status = colorDot(styleRed, selected)
 		if row.err != nil {
@@ -382,22 +400,20 @@ func (m Model) titleMaxWidth() int {
 	return max
 }
 
-// readinessLabel returns a single colored dot indicating merge readiness:
-//   - green: PR is ready to merge (all conditions met) or already merged
-//   - yellow: pending — no user intervention required (reviews/CI in progress)
-//   - red: requires user intervention (changes requested, CI failed, conflicts, closed)
 func readinessLabel(r *gh.PollResult, selected bool) string {
+	colorWord := func(style lipgloss.Style, word string) string {
+		if selected {
+			style = style.Background(selectedBg)
+		}
+		return style.Render(word)
+	}
 	switch {
-	case r.PR.State == "MERGED":
-		return colorDot(styleGreen, selected)
-	case r.PR.State == "CLOSED":
-		return colorDot(styleRed, selected)
 	case needsUserAction(r):
-		return colorDot(styleRed, selected)
+		return colorWord(styleRed, "action")
 	case r.IsReady():
-		return colorDot(styleGreen, selected)
+		return colorWord(styleGreen, "ready")
 	default:
-		return colorDot(styleYellow, selected)
+		return colorWord(styleYellow, "pending")
 	}
 }
 
