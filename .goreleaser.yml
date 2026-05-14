@@ -12,4 +12,4 @@ builds:
 
 archives:
   - formats: [zip]
-    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
