@@ -9,8 +9,9 @@ gh watch
   PR    STATUS   AUTO   TITLE                                    REVIEWS  CHECKS   UPDATED
   18    ready         Add dark mode support to settings page    0/1/0    5/0/0       12s
  253    ready   auto  Migrate auth tokens to Redis cache pool   2/0/0    3/2/0       12s
+ 301   merged         Refactor auth middleware                  2/0/0   14/0/0        3m
 
-[↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [r] refresh   [o] open in browser   [q] quit
+[↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [r] refresh  [s] settings  [o] open  [q] quit
 ```
 
 ## Installation
@@ -21,6 +22,12 @@ gh extension install nikhilweee/gh-watch
 
 Requires the [`gh` CLI](https://cli.github.com) to be installed and
 authenticated.
+
+To update:
+
+```bash
+gh extension upgrade watch
+```
 
 ## Usage
 
@@ -69,23 +76,45 @@ The dashboard shows a configurable set of columns. Available columns:
 | Column    | Meaning                                                                                        | Default |
 | --------- | ---------------------------------------------------------------------------------------------- | ------- |
 | `PR`      | PR number                                                                                      | ✓       |
-| `STATUS`  | Merge readiness — green: `ready` · yellow: `pending` · red: `action`                           | ✓       |
+| `STATUS`  | GitHub merge state (see below)                                                                 | ✓       |
 | `AUTO`    | `auto` when auto-merge is enabled, blank otherwise                                             | ✓       |
 | `TITLE`   | PR title (truncated with `…` if the terminal is narrow)                                        | ✓       |
 | `AUTHOR`  | PR author login                                                                                |         |
 | `BASE`    | Target branch name                                                                             |         |
-| `DRAFT`   | Shows `draft` when the PR is a draft                                                           |         |
 | `REVIEWS` | Three counts in green / yellow / red: approved · pending · changes-requested. Zeros are muted. | ✓       |
 | `CHECKS`  | Three counts in green / yellow / red: passed · running · failed. Zeros are muted.              | ✓       |
 | `UPDATED` | Time since the last poll                                                                       | ✓       |
 
+#### STATUS values
+
+| Value      | Color  | Meaning                                      |
+| ---------- | ------ | -------------------------------------------- |
+| `ready`    | green  | All requirements met — safe to merge         |
+| `blocked`  | red    | Required reviews or checks not yet satisfied |
+| `conflict` | red    | Merge conflict must be resolved              |
+| `behind`   | yellow | Branch is behind the base branch             |
+| `unstable` | yellow | Non-required checks are failing              |
+| `draft`    | muted  | PR is a draft                                |
+| `merged`   | muted  | PR has been merged                           |
+| `closed`   | muted  | PR was closed without merging                |
+
 Merged and closed PRs remain in the list with all columns dimmed until manually
 removed with `x`.
 
-Column visibility and sort order are persisted to `~/.config/gh-watch/config.json`.
+Column visibility, sort order, and poll interval are persisted to
+`~/.config/gh-watch/config.json`.
 
-When auto-merge is enabled for a PR, the dashboard merges it as soon as it's
-approved, mergeable, and CI is green.
+Press `s` to open the settings overlay. From there you can:
+
+- **Poll interval** — choose from 15s / 30s / 60s / 120s / 300s (`space` to
+  select)
+- **Columns** — toggle visibility with `space`; reorder visible columns with
+  `shift+↑/↓`
+- **Sort** — press `s` on any sortable column to cycle ascending → descending →
+  off
+
+When auto-merge is enabled for a PR, the dashboard merges it as soon as its
+STATUS shows `ready`.
 
 ### Keyboard shortcuts
 
@@ -97,24 +126,22 @@ approved, mergeable, and CI is green.
 | `x`            | Remove the selected PR from the watchlist  |
 | `m`            | Toggle auto-merge on the selected PR       |
 | `r`            | Force refresh all PRs immediately          |
-| `c`            | Open column picker (toggle columns on/off) |
-| `s`            | Open sort picker                           |
+| `s`            | Open settings                              |
 | `o`            | Open the selected PR in a web browser      |
 | `q` / `Ctrl+C` | Quit                                       |
 
 ## Auto-merge
 
 When `--automerge` is set (or toggled in the dashboard with `m`), the dashboard
-merges the PR as soon as all of the following are true:
-
-- PR is open and not a draft
-- `reviewDecision` is not `CHANGES_REQUESTED` or `REVIEW_REQUIRED`
-- `mergeStateStatus` is `CLEAN`
-- All CI checks have passed
+merges the PR as soon as GitHub reports `STATUS = ready` — meaning GitHub itself
+considers the PR fully mergeable (all required reviews approved, all required
+checks passed, no conflicts, branch protection rules satisfied).
 
 ## State
 
-Watched PRs are stored in `~/.config/gh-watch/state.json`. Column and sort preferences are stored in `~/.config/gh-watch/config.json`. Both files are written atomically and persist across sessions.
+Watched PRs are stored in `~/.config/gh-watch/state.json`. Column and sort
+preferences are stored in `~/.config/gh-watch/config.json`. Both files are
+written atomically and persist across sessions.
 
 ## Local development
 

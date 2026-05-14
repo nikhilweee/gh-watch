@@ -15,17 +15,14 @@ type PRStatus struct {
 	Number           int    `json:"number"`
 	Title            string `json:"title"`
 	State            string `json:"state"`
-	IsDraft          bool   `json:"isDraft"`
 	ReviewDecision   string `json:"reviewDecision"`
 	MergeStateStatus string `json:"mergeStateStatus"`
-	Mergeable        string `json:"mergeable"`
 	Author           string
 	BaseRefName      string `json:"baseRefName"`
 }
 
 type PollResult struct {
 	PR              PRStatus
-	ChecksState     string // SUCCESS, FAILURE, PENDING, UNKNOWN
 	PassedChecks    int
 	FailedChecks    int
 	RunningChecks   int
@@ -52,15 +49,13 @@ func GetPRStatus(repo string, prNumber int) (*PollResult, error) {
 				Number           int    `json:"number"`
 				Title            string `json:"title"`
 				State            string `json:"state"`
-				IsDraft          bool   `json:"isDraft"`
 				ReviewDecision   string `json:"reviewDecision"`
 				MergeStateStatus string `json:"mergeStateStatus"`
-				Mergeable        string `json:"mergeable"`
 				BaseRefName      string `json:"baseRefName"`
 				Author           struct {
 					Login string `json:"login"`
 				} `json:"author"`
-				LatestReviews    struct {
+				LatestReviews struct {
 					Nodes []struct {
 						State string `json:"state"`
 					} `json:"nodes"`
@@ -72,7 +67,6 @@ func GetPRStatus(repo string, prNumber int) (*PollResult, error) {
 					Nodes []struct {
 						Commit struct {
 							StatusCheckRollup struct {
-								State    string `json:"state"`
 								Contexts struct {
 									Nodes []struct {
 										Typename   string `json:"__typename"`
@@ -93,7 +87,7 @@ func GetPRStatus(repo string, prNumber int) (*PollResult, error) {
 		query($owner: String!, $name: String!, $number: Int!) {
 			repository(owner: $owner, name: $name) {
 				pullRequest(number: $number) {
-					id number title state isDraft reviewDecision mergeStateStatus mergeable baseRefName
+					id number title state reviewDecision mergeStateStatus baseRefName
 					author { login }
 					latestReviews(first: 50) {
 						nodes { state }
@@ -103,7 +97,6 @@ func GetPRStatus(repo string, prNumber int) (*PollResult, error) {
 						nodes {
 							commit {
 								statusCheckRollup {
-									state
 									contexts(first: 50) {
 										nodes {
 											__typename
@@ -134,14 +127,11 @@ func GetPRStatus(repo string, prNumber int) (*PollResult, error) {
 			Number:           pr.Number,
 			Title:            pr.Title,
 			State:            pr.State,
-			IsDraft:          pr.IsDraft,
 			ReviewDecision:   pr.ReviewDecision,
 			MergeStateStatus: pr.MergeStateStatus,
-			Mergeable:        pr.Mergeable,
 			Author:           pr.Author.Login,
 			BaseRefName:      pr.BaseRefName,
 		},
-		ChecksState:    "UNKNOWN",
 		PendingReviews: pr.ReviewRequests.TotalCount,
 	}
 
@@ -156,7 +146,6 @@ func GetPRStatus(repo string, prNumber int) (*PollResult, error) {
 
 	if len(pr.Commits.Nodes) > 0 {
 		rollup := pr.Commits.Nodes[0].Commit.StatusCheckRollup
-		result.ChecksState = rollup.State
 		for _, node := range rollup.Contexts.Nodes {
 			switch node.Typename {
 			case "CheckRun":
@@ -185,22 +174,7 @@ func GetPRStatus(repo string, prNumber int) (*PollResult, error) {
 }
 
 func (r *PollResult) IsReady() bool {
-	if r.PR.State != "OPEN" {
-		return false
-	}
-	if r.PR.IsDraft {
-		return false
-	}
-	if r.PR.ReviewDecision == "CHANGES_REQUESTED" || r.PR.ReviewDecision == "REVIEW_REQUIRED" {
-		return false
-	}
-	if r.PR.MergeStateStatus != "CLEAN" {
-		return false
-	}
-	if r.ChecksState != "SUCCESS" && r.ChecksState != "UNKNOWN" {
-		return false
-	}
-	return true
+	return r.PR.State == "OPEN" && r.PR.MergeStateStatus == "CLEAN"
 }
 
 func MergePR(nodeID string) error {
