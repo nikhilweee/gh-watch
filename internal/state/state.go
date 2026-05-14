@@ -45,7 +45,7 @@ type Config struct {
 	PollInterval int      `json:"pollInterval,omitempty"` // seconds, default 60
 }
 
-var DefaultColumns = []string{"PR", "STATUS", "AUTO", "TITLE", "REVIEWS", "CHECKS", "UPDATED"}
+var DefaultColumns = []string{"PR", "STATUS", "AUTOMERGE", "TITLE", "REVIEWS", "CHECKS", "UPDATED"}
 
 func configFilePath() (string, error) {
 	dir, err := configDir()
@@ -75,7 +75,7 @@ func LoadConfig() (Config, error) {
 		c.Columns = DefaultColumns
 	}
 	if c.PollInterval == 0 {
-		c.PollInterval = 60
+		c.PollInterval = 300
 	}
 	return c, nil
 }

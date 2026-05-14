@@ -45,7 +45,7 @@ type columnDef struct {
 var allColumns = []columnDef{
 	{"PR", "PR", true},
 	{"STATUS", "STATUS", true},
-	{"AUTO", "AUTO", true},
+	{"AUTOMERGE", "AUTOMERGE", true},
 	{"TITLE", "TITLE", true},
 	{"AUTHOR", "AUTHOR", true},
 	{"BASE", "BASE", true},
@@ -54,7 +54,7 @@ var allColumns = []columnDef{
 	{"UPDATED", "UPDATED", true},
 }
 
-var intervalOptions = []int{15, 30, 60, 120, 300}
+var intervalOptions = []int{15, 30, 60, 120, 300, 900, 3600}
 
 type settingsItem struct {
 	kind  string // "interval" or "column"
@@ -76,6 +76,8 @@ type pollDoneMsg struct {
 	result *gh.PollResult
 	err    error
 }
+
+type pollAllDoneMsg []pollDoneMsg
 
 type mergeDoneMsg struct {
 	repo string
@@ -209,8 +211,12 @@ func (m Model) Init() tea.Cmd {
 		m.spinner.Tick,
 		tea.Tick(m.pollInterval, func(t time.Time) tea.Msg { return tickMsg(t) }),
 	}
-	for i := range m.rows {
-		cmds = append(cmds, pollCmd(m.rows[i].watch))
+	if len(m.rows) > 0 {
+		watches := make([]state.Watch, len(m.rows))
+		for i, r := range m.rows {
+			watches[i] = r.watch
+		}
+		cmds = append(cmds, pollAllCmd(watches))
 	}
 	return tea.Batch(cmds...)
 }
@@ -246,7 +252,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeNormal
 				m.inputErr = ""
 				m.input.SetValue("")
-				return m, tea.Batch(addToState(w), pollCmd(w))
+				return m, tea.Batch(addToState(w), pollAllCmd([]state.Watch{w}))
 			default:
 				var cmd tea.Cmd
 				m.input, cmd = m.input.Update(msg)
@@ -264,7 +270,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "right", "l":
 				m.settingsPanel = 1
 			case "up", "k":
-				if m.settingsPanel == 0 {
+				if m.settingsPanel == 1 {
 					if m.intervalCursor > 0 {
 						m.intervalCursor--
 					}
@@ -274,7 +280,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case "down", "j":
-				if m.settingsPanel == 0 {
+				if m.settingsPanel == 1 {
 					if m.intervalCursor < len(intervalOptions)-1 {
 						m.intervalCursor++
 					}
@@ -284,7 +290,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case "space":
-				if m.settingsPanel == 0 {
+				if m.settingsPanel == 1 {
 					m.pollInterval = time.Duration(intervalOptions[m.intervalCursor]) * time.Second
 					cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc, PollInterval: intervalOptions[m.intervalCursor]}
 					return m, saveConfigCmd(cfg)
@@ -302,12 +308,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				if !found {
-					m.columns = addColumn(m.columns, *item.col)
+					m.columns = append(m.columns, *item.col)
 				}
 				cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc, PollInterval: int(m.pollInterval.Seconds())}
 				return m, saveConfigCmd(cfg)
 			case "s":
-				if m.settingsPanel != 1 {
+				if m.settingsPanel != 0 {
 					break
 				}
 				item := colItems[m.pickerCursor]
@@ -328,7 +334,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc, PollInterval: int(m.pollInterval.Seconds())}
 				return m, saveConfigCmd(cfg)
 			case "shift+up":
-				if m.settingsPanel != 1 {
+				if m.settingsPanel != 0 {
 					break
 				}
 				item := colItems[m.pickerCursor]
@@ -350,7 +356,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc, PollInterval: int(m.pollInterval.Seconds())}
 				return m, saveConfigCmd(cfg)
 			case "shift+down":
-				if m.settingsPanel != 1 {
+				if m.settingsPanel != 0 {
 					break
 				}
 				item := colItems[m.pickerCursor]
@@ -396,14 +402,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "r":
-				var cmds []tea.Cmd
+				var toRefresh []state.Watch
 				for i := range m.rows {
 					if m.rows[i].state != rowMerging {
 						m.rows[i].state = rowPolling
-						cmds = append(cmds, pollCmd(m.rows[i].watch))
+						toRefresh = append(toRefresh, m.rows[i].watch)
 					}
 				}
-				return m, tea.Batch(cmds...)
+				if len(toRefresh) > 0 {
+					return m, pollAllCmd(toRefresh)
+				}
 			case "up", "k":
 				if m.cursor > 0 {
 					m.cursor--
@@ -456,42 +464,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{
 			tea.Tick(m.pollInterval, func(t time.Time) tea.Msg { return tickMsg(t) }),
 		}
+		var toPoll []state.Watch
 		for i := range m.rows {
 			if m.rows[i].state != rowMerging && m.rows[i].state != rowMerged && m.rows[i].state != rowClosed {
 				m.rows[i].state = rowPolling
-				cmds = append(cmds, pollCmd(m.rows[i].watch))
+				toPoll = append(toPoll, m.rows[i].watch)
 			}
+		}
+		if len(toPoll) > 0 {
+			cmds = append(cmds, pollAllCmd(toPoll))
 		}
 		return m, tea.Batch(cmds...)
 
-	case pollDoneMsg:
-		for i := range m.rows {
-			w := m.rows[i].watch
-			if w.PR != msg.pr || w.Repo != msg.repo {
-				continue
-			}
-			m.rows[i].lastAt = time.Now()
-			if msg.err != nil {
-				m.rows[i].state = rowError
-				m.rows[i].err = msg.err
+	case pollAllDoneMsg:
+		var cmds []tea.Cmd
+		now := time.Now()
+		for _, msg := range msg {
+			for i := range m.rows {
+				w := m.rows[i].watch
+				if w.PR != msg.pr || w.Repo != msg.repo {
+					continue
+				}
+				m.rows[i].lastAt = now
+				if msg.err != nil {
+					m.rows[i].state = rowError
+					m.rows[i].err = msg.err
+					break
+				}
+				m.rows[i].result = msg.result
+				switch msg.result.PR.State {
+				case "MERGED":
+					m.rows[i].state = rowMerged
+				case "CLOSED":
+					m.rows[i].state = rowClosed
+				default:
+					if msg.result.IsReady() && w.AutoMerge {
+						m.rows[i].state = rowMerging
+						cmds = append(cmds, mergeCmd(w, msg.result.PR.NodeID))
+					} else {
+						m.rows[i].state = rowReady
+					}
+				}
 				break
 			}
-			m.rows[i].result = msg.result
-			switch msg.result.PR.State {
-			case "MERGED":
-				m.rows[i].state = rowMerged
-			case "CLOSED":
-				m.rows[i].state = rowClosed
-			default:
-				if msg.result.IsReady() && w.AutoMerge {
-					m.rows[i].state = rowMerging
-					return m, mergeCmd(w, msg.result.PR.NodeID)
-				}
-				m.rows[i].state = rowReady
-			}
-			m.sortRows()
-			break
 		}
+		m.sortRows()
+		return m, tea.Batch(cmds...)
 
 	case mergeDoneMsg:
 		for i := range m.rows {
@@ -523,13 +541,54 @@ func (m Model) View() tea.View {
 	case modeSettings:
 		inner.WriteString(styleBold.Render("Settings") + "\n\n")
 
-		// Left panel: Poll interval
-		currentSecs := int(m.pollInterval.Seconds())
+		// Left panel: Columns
+		colItems := settingsColumnItems(m)
+		activeSet := map[string]bool{}
+		for _, c := range m.columns {
+			activeSet[c.id] = true
+		}
 		var leftLines []string
-		leftLines = append(leftLines, styleBold.Render("Poll Interval"))
+		leftLines = append(leftLines, styleBold.Render("Columns"))
+		for i, item := range colItems {
+			cursor := "  "
+			if m.settingsPanel == 0 && i == m.pickerCursor {
+				cursor = styleGreen.Render("▶ ")
+			}
+			locked := item.col.id == "PR"
+			var check, label string
+			arrow := "  "
+			if item.col.id == m.sortBy && m.sortBy != "" {
+				if m.sortDesc {
+					arrow = "↓ "
+				} else {
+					arrow = "↑ "
+				}
+			}
+			if locked {
+				check = styleMuted.Render("[x]")
+				label = styleMuted.Render(arrow + item.col.header)
+			} else if activeSet[item.col.id] {
+				check = styleGreen.Render("[x]")
+				if arrow != "  " {
+					label = styleGreen.Render(arrow + item.col.header)
+				} else {
+					label = styleMuted.Render(arrow) + item.col.header
+				}
+			} else {
+				check = styleMuted.Render("[ ]")
+				label = styleMuted.Render(arrow + item.col.header)
+			}
+			leftLines = append(leftLines, fmt.Sprintf("%s%s  %s", cursor, check, label))
+		}
+		leftStr := lipgloss.NewStyle().Width(30).Render(strings.Join(leftLines, "\n"))
+
+		// Right panel: Poll interval
+		currentSecs := int(m.pollInterval.Seconds())
+		var rightLines []string
+		rightLines = append(rightLines, styleBold.Render("Poll Interval"))
 		for i, v := range intervalOptions {
 			cursor := "  "
-			if m.settingsPanel == 0 && i == m.intervalCursor {
+			if m.settingsPanel == 1 && i == m.intervalCursor {
 				cursor = styleGreen.Render("▶ ")
 			}
 			var check string
@@ -538,51 +597,13 @@ func (m Model) View() tea.View {
 			} else {
 				check = styleMuted.Render("[ ]")
 			}
-			leftLines = append(leftLines, fmt.Sprintf("%s%s  %ds", cursor, check, v))
-		}
-		leftStr := lipgloss.NewStyle().Width(26).Render(strings.Join(leftLines, "\n"))
-
-		// Right panel: Columns
-		colItems := settingsColumnItems(m)
-		activeSet := map[string]bool{}
-		for _, c := range m.columns {
-			activeSet[c.id] = true
-		}
-		numVisible := len(m.columns)
-		var rightLines []string
-		rightLines = append(rightLines, styleBold.Render("Columns"))
-		for i, item := range colItems {
-			if i == numVisible {
-				rightLines = append(rightLines, "")
-				rightLines = append(rightLines, styleMuted.Render("Hidden"))
-			}
-			cursor := "  "
-			if m.settingsPanel == 1 && i == m.pickerCursor {
-				cursor = styleGreen.Render("▶ ")
-			}
-			locked := item.col.id == "PR"
-			var check, label string
-			sortSuffix := ""
-			if item.col.id == m.sortBy && m.sortBy != "" {
-				if m.sortDesc {
-					sortSuffix = " ↓"
-				} else {
-					sortSuffix = " ↑"
-				}
-			}
-			if locked {
-				check = styleMuted.Render("[x]")
-				label = styleMuted.Render(item.col.header + sortSuffix)
-			} else if activeSet[item.col.id] {
-				check = styleGreen.Render("[x]")
-				if sortSuffix != "" {
-					label = styleGreen.Render(item.col.header + sortSuffix)
-				} else {
-					label = item.col.header
-				}
+			var label string
+			if v >= 3600 {
+				label = fmt.Sprintf("%dh", v/3600)
+			} else if v >= 60 {
+				label = fmt.Sprintf("%dm", v/60)
 			} else {
-				check = styleMuted.Render("[ ]")
-				label = styleMuted.Render(item.col.header)
+				label = fmt.Sprintf("%ds", v)
 			}
 			rightLines = append(rightLines, fmt.Sprintf("%s%s  %s", cursor, check, label))
 		}
@@ -652,7 +673,7 @@ func (m Model) View() tea.View {
 	case modeSettings:
 		footer.WriteString(styleHelp.Render("[space] select/toggle  [s] sort  [shift+↑/↓] reorder  [←/→] switch panel  [esc] close"))
 	default:
-		footer.WriteString(styleHelp.Render("[↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [r] refresh  [s] settings  [o] open  [q] quit"))
+		footer.WriteString(styleHelp.Render("[↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [o] open  [r] refresh  [s] settings  [q] quit"))
 	}
 
 	var b strings.Builder
@@ -677,7 +698,11 @@ func (m Model) cellValue(row watchRow, col columnDef, selected bool) string {
 	case "PR":
 		s := fmt.Sprintf("%d", row.watch.PR)
 		if row.state == rowPolling {
-			return m.spinner.View()
+			spin := m.spinner.View()
+			if pad := len(s) - lipgloss.Width(spin); pad > 0 {
+				return spin + strings.Repeat(" ", pad)
+			}
+			return spin
 		}
 		if dim {
 			return styleMuted.Render(s)
@@ -693,11 +718,11 @@ func (m Model) cellValue(row watchRow, col columnDef, selected bool) string {
 		}
 		return mergeStatusLabel(r, selected)
 
-	case "AUTO":
+	case "AUTOMERGE":
 		if dim || !row.watch.AutoMerge {
 			return ""
 		}
-		return styleYellow.Render("auto")
+		return styleYellow.Render("enabled")
 
 	case "TITLE":
 		if row.state == rowError && row.err != nil {
@@ -772,11 +797,6 @@ func (m *Model) sortRows() {
 		return
 	}
 	sort.SliceStable(m.rows, func(i, j int) bool {
-		iDone := m.rows[i].state == rowMerged || m.rows[i].state == rowClosed
-		jDone := m.rows[j].state == rowMerged || m.rows[j].state == rowClosed
-		if iDone != jDone {
-			return !iDone
-		}
 		ri := m.rows[i].result
 		rj := m.rows[j].result
 		if ri == nil || rj == nil {
@@ -788,7 +808,7 @@ func (m *Model) sortRows() {
 			less = m.rows[i].watch.PR < m.rows[j].watch.PR
 		case "STATUS":
 			less = statusRank(ri) < statusRank(rj)
-		case "AUTO":
+		case "AUTOMERGE":
 			ai, aj := 0, 0
 			if m.rows[i].watch.AutoMerge {
 				ai = 1
@@ -926,10 +946,18 @@ func truncate(s string, max int) string {
 	return string(runes[:max-1]) + "…"
 }
 
-func pollCmd(w state.Watch) tea.Cmd {
+func pollAllCmd(watches []state.Watch) tea.Cmd {
 	return func() tea.Msg {
-		result, err := gh.GetPRStatus(w.Repo, w.PR)
-		return pollDoneMsg{repo: w.Repo, pr: w.PR, result: result, err: err}
+		targets := make([]gh.WatchTarget, len(watches))
+		for i, w := range watches {
+			targets[i] = gh.WatchTarget{Repo: w.Repo, PR: w.PR}
+		}
+		results, errs := gh.GetAllPRStatuses(targets)
+		msgs := make(pollAllDoneMsg, len(watches))
+		for i, w := range watches {
+			msgs[i] = pollDoneMsg{repo: w.Repo, pr: w.PR, result: results[i], err: errs[i]}
+		}
+		return msgs
 	}
 }
 
