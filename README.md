@@ -6,10 +6,10 @@ all checks pass and approvals are in.
 ```
 gh watch
 
-  PR    STATUS   AUTOMERGE  TITLE                                    REVIEWS  CHECKS   UPDATED
-  18    ready              Add dark mode support to settings page    0/1/0    5/0/0       12s
- 253    ready    enabled   Migrate auth tokens to Redis cache pool   2/0/0    3/2/0       12s
- 301   merged              Refactor auth middleware                  2/0/0   14/0/0        3m
+ PR    STATUS   AUTOMERGE  TITLE                                    REVIEWS  CHECKS  UPDATED
+ 18    ready               Add dark mode support to settings page   0/1/0    5/0/0   12s
+ 253   ready    enabled    Migrate auth tokens to Redis cache pool  2/0/0    3/2/0   12s
+ 301   merged              Refactor auth middleware                 2/0/0    14/0/0  3m
 
 [↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [o] open  [r] refresh  [s] settings  [q] quit
 ```
@@ -53,8 +53,8 @@ gh watch add 2143 --automerge
 gh watch
 ```
 
-Opens a live TUI that polls all watched PRs every 5 minutes by default and shows their
-current status. The layout is responsive to terminal width.
+Opens a live TUI that polls all watched PRs every 5 minutes by default and shows
+their current status. The layout is responsive to terminal width.
 
 ### Remove a PR
 
@@ -73,30 +73,39 @@ gh watch list
 
 The dashboard shows a configurable set of columns. Available columns:
 
-| Column    | Meaning                                                                                        | Default |
-| --------- | ---------------------------------------------------------------------------------------------- | ------- |
-| `PR`      | PR number                                                                                      | ✓       |
-| `STATUS`  | GitHub merge state (see below)                                                                 | ✓       |
-| `AUTOMERGE` | `enabled` when auto-merge is on, blank otherwise                                             | ✓       |
-| `TITLE`   | PR title (truncated with `…` if the terminal is narrow)                                        | ✓       |
-| `AUTHOR`  | PR author login                                                                                |         |
-| `BASE`    | Target branch name                                                                             |         |
-| `REVIEWS` | Three counts in green / yellow / red: approved · pending · changes-requested. Zeros are muted. | ✓       |
-| `CHECKS`  | Three counts in green / yellow / red: passed · running · failed. Zeros are muted.              | ✓       |
-| `UPDATED` | Time since the last poll                                                                       | ✓       |
+| Column      | Meaning                     | Default |
+| ----------- | --------------------------- | ------- |
+| `PR`        | PR number                   | ✓       |
+| `STATUS`    | Merge status (see below)    | ✓       |
+| `AUTOMERGE` | Auto-merge status           | ✓       |
+| `TITLE`     | PR title                    | ✓       |
+| `AUTHOR`    | PR author                   |         |
+| `BASE`      | Target branch name          |         |
+| `REVIEWS`   | Review counts (see below)   | ✓       |
+| `CHECKS`    | CI check counts (see below) | ✓       |
+| `UPDATED`   | Time since the last poll    | ✓       |
 
 ### STATUS values
 
-| Value      | Color  | Meaning                                      |
-| ---------- | ------ | -------------------------------------------- |
-| `ready`    | green  | All requirements met — safe to merge         |
-| `blocked`  | red    | Branch protection rules not satisfied (reviews, checks, or other policies) |
-| `conflict` | red    | Merge conflict must be resolved              |
-| `behind`   | yellow | Branch is behind the base branch             |
-| `unstable` | yellow | Non-required checks are failing              |
-| `draft`    | muted  | PR is a draft                                |
-| `merged`   | muted  | PR has been merged                           |
-| `closed`   | muted  | PR was closed without merging                |
+| Value      | Color  | Meaning                               |
+| ---------- | ------ | ------------------------------------- |
+| `ready`    | green  | All requirements met — safe to merge  |
+| `blocked`  | red    | Branch protection rules not satisfied |
+| `conflict` | red    | Merge conflict must be resolved       |
+| `behind`   | yellow | Branch is behind the base branch      |
+| `unstable` | yellow | Non-required checks are failing       |
+| `draft`    | muted  | PR is a draft                         |
+| `merged`   | muted  | PR has been merged                    |
+| `closed`   | muted  | PR was closed without merging         |
+
+### REVIEWS and CHECKS values
+
+Both columns show three `/`-separated counts. Zeros are muted.
+
+| Column    | Green    | Yellow  | Red               |
+| --------- | -------- | ------- | ----------------- |
+| `REVIEWS` | Approved | Pending | Changes requested |
+| `CHECKS`  | Passed   | Running | Failed            |
 
 Merged and closed PRs remain in the list with all columns dimmed until manually
 removed with `x`.
@@ -106,8 +115,8 @@ Column visibility, sort order, and poll interval are persisted to
 
 Press `s` to open the settings overlay. From there you can:
 
-- **Poll interval** — choose from 15s / 30s / 1m / 2m / 5m / 15m / 1h (`space` to
-  select)
+- **Poll interval** — choose from 15s / 30s / 1m / 2m / 5m / 15m / 1h (`space`
+  to select)
 - **Columns** — toggle visibility with `space`; reorder visible columns with
   `shift+↑/↓`
 - **Sort** — press `s` on any sortable column to cycle ascending → descending →
