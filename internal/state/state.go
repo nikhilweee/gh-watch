@@ -39,9 +39,10 @@ func configPath() (string, error) {
 
 // Config holds user preferences persisted to config.json.
 type Config struct {
-	Columns  []string `json:"columns,omitempty"`
-	SortBy   string   `json:"sortBy,omitempty"`
-	SortDesc bool     `json:"sortDesc,omitempty"`
+	Columns      []string `json:"columns,omitempty"`
+	SortBy       string   `json:"sortBy,omitempty"`
+	SortDesc     bool     `json:"sortDesc,omitempty"`
+	PollInterval int      `json:"pollInterval,omitempty"` // seconds, default 60
 }
 
 var DefaultColumns = []string{"PR", "STATUS", "AUTO", "TITLE", "REVIEWS", "CHECKS", "UPDATED"}
@@ -72,6 +73,9 @@ func LoadConfig() (Config, error) {
 	}
 	if len(c.Columns) == 0 {
 		c.Columns = DefaultColumns
+	}
+	if c.PollInterval == 0 {
+		c.PollInterval = 60
 	}
 	return c, nil
 }
