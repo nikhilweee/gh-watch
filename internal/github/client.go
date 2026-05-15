@@ -208,10 +208,6 @@ func GetAllPRStatuses(targets []WatchTarget) ([]*PollResult, []error) {
 	return results, errs
 }
 
-func GetPRStatus(repo string, prNumber int) (*PollResult, error) {
-	results, errs := GetAllPRStatuses([]WatchTarget{{Repo: repo, PR: prNumber}})
-	return results[0], errs[0]
-}
 
 func (r *PollResult) IsReady() bool {
 	return r.PR.State == "OPEN" && r.PR.MergeStateStatus == "CLEAN"

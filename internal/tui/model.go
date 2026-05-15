@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/spinner"
@@ -56,11 +57,13 @@ var allColumns = []columnDef{
 
 var intervalOptions = []int{15, 30, 60, 120, 300, 900, 3600}
 
-type settingsItem struct {
-	kind  string // "interval" or "column"
-	value int    // seconds, for interval items
-	col   *columnDef
-}
+var colsByIDMap = func() map[string]*columnDef {
+	m := make(map[string]*columnDef, len(allColumns))
+	for i := range allColumns {
+		m[allColumns[i].id] = &allColumns[i]
+	}
+	return m
+}()
 
 type watchRow struct {
 	watch  state.Watch
@@ -108,75 +111,33 @@ type Model struct {
 // columnsFromIDs builds a columnDef slice from IDs, preserving the given order.
 // PR is always first.
 func columnsFromIDs(ids []string) []columnDef {
-	colsByID := make(map[string]columnDef, len(allColumns))
-	for _, c := range allColumns {
-		colsByID[c.id] = c
-	}
 	seen := map[string]bool{"PR": true}
-	cols := []columnDef{colsByID["PR"]}
+	cols := []columnDef{*colsByIDMap["PR"]}
 	for _, id := range ids {
 		if seen[id] {
 			continue
 		}
-		c, ok := colsByID[id]
+		c, ok := colsByIDMap[id]
 		if !ok {
 			continue
 		}
-		cols = append(cols, c)
+		cols = append(cols, *c)
 		seen[id] = true
 	}
 	return cols
 }
 
-// addColumn inserts col into cols at its natural allColumns position,
-// preserving the relative order of already-visible columns.
-func addColumn(cols []columnDef, col columnDef) []columnDef {
-	colAllIdx := -1
-	for i, c := range allColumns {
-		if c.id == col.id {
-			colAllIdx = i
-			break
-		}
-	}
-	ins := len(cols)
-	for i, c := range cols {
-		for j, ac := range allColumns {
-			if ac.id == c.id {
-				if j > colAllIdx {
-					ins = i
-				}
-				break
-			}
-		}
-		if ins != len(cols) {
-			break
-		}
-	}
-	result := make([]columnDef, 0, len(cols)+1)
-	result = append(result, cols[:ins]...)
-	result = append(result, col)
-	result = append(result, cols[ins:]...)
-	return result
-}
-
 // settingsColumnItems returns visible columns (in m.columns order) then hidden columns.
-func settingsColumnItems(m Model) []settingsItem {
-	items := make([]settingsItem, 0, len(allColumns))
+func settingsColumnItems(m Model) []*columnDef {
+	items := make([]*columnDef, 0, len(allColumns))
 	visibleSet := map[string]bool{}
 	for _, c := range m.columns {
 		visibleSet[c.id] = true
-	}
-	for i := range m.columns {
-		for j := range allColumns {
-			if allColumns[j].id == m.columns[i].id {
-				items = append(items, settingsItem{kind: "column", col: &allColumns[j]})
-				break
-			}
-		}
+		items = append(items, colsByIDMap[c.id])
 	}
 	for i := range allColumns {
 		if !visibleSet[allColumns[i].id] {
-			items = append(items, settingsItem{kind: "column", col: &allColumns[i]})
+			items = append(items, &allColumns[i])
 		}
 	}
 	return items
@@ -292,35 +253,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "space":
 				if m.settingsPanel == 1 {
 					m.pollInterval = time.Duration(intervalOptions[m.intervalCursor]) * time.Second
-					cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc, PollInterval: intervalOptions[m.intervalCursor]}
-					return m, saveConfigCmd(cfg)
+					return m, saveConfigCmd(m.currentConfig())
 				}
 				item := colItems[m.pickerCursor]
-				if item.col.id == "PR" {
+				if item.id == "PR" {
 					break
 				}
 				found := false
 				for i, c := range m.columns {
-					if c.id == item.col.id {
+					if c.id == item.id {
 						m.columns = append(m.columns[:i], m.columns[i+1:]...)
 						found = true
 						break
 					}
 				}
 				if !found {
-					m.columns = append(m.columns, *item.col)
+					m.columns = append(m.columns, *item)
 				}
-				cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc, PollInterval: int(m.pollInterval.Seconds())}
-				return m, saveConfigCmd(cfg)
+				return m, saveConfigCmd(m.currentConfig())
 			case "s":
 				if m.settingsPanel != 0 {
 					break
 				}
 				item := colItems[m.pickerCursor]
-				if !item.col.sortable {
+				if !item.sortable {
 					break
 				}
-				id := item.col.id
+				id := item.id
 				if id != m.sortBy {
 					m.sortBy = id
 					m.sortDesc = false
@@ -331,52 +290,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sortDesc = false
 				}
 				m.sortRows()
-				cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc, PollInterval: int(m.pollInterval.Seconds())}
-				return m, saveConfigCmd(cfg)
-			case "k":
+				return m, saveConfigCmd(m.currentConfig())
+			case "k", "j":
 				if m.settingsPanel != 0 {
 					break
 				}
 				item := colItems[m.pickerCursor]
-				if item.col.id == "PR" {
-					break
-				}
 				pos := -1
 				for i, c := range m.columns {
-					if c.id == item.col.id {
+					if c.id == item.id {
 						pos = i
 						break
 					}
 				}
-				if pos <= 1 {
+				delta := 1
+				if msg.Keystroke() == "k" {
+					delta = -1
+				}
+				newPos := pos + delta
+				if pos <= 0 || newPos <= 0 || newPos >= len(m.columns) {
 					break
 				}
-				m.columns[pos-1], m.columns[pos] = m.columns[pos], m.columns[pos-1]
-				m.pickerCursor--
-				cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc, PollInterval: int(m.pollInterval.Seconds())}
-				return m, saveConfigCmd(cfg)
-			case "j":
-				if m.settingsPanel != 0 {
-					break
-				}
-				item := colItems[m.pickerCursor]
-				if item.col.id == "PR" {
-					break
-				}
-				pos := -1
-				for i, c := range m.columns {
-					if c.id == item.col.id {
-						pos = i
-						break
-					}
-				}
-				if pos < 0 || pos >= len(m.columns)-1 {
-					break
-				}
-				m.columns[pos], m.columns[pos+1] = m.columns[pos+1], m.columns[pos]
-				m.pickerCursor++
-				cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc, PollInterval: int(m.pollInterval.Seconds())}
-				return m, saveConfigCmd(cfg)
+				m.columns[pos], m.columns[newPos] = m.columns[newPos], m.columns[pos]
+				m.pickerCursor += delta
+				return m, saveConfigCmd(m.currentConfig())
 			}
 			return m, nil
 
@@ -554,10 +491,10 @@ func (m Model) View() tea.View {
 			if m.settingsPanel == 0 && i == m.pickerCursor {
 				cursor = styleGreen.Render("▶ ")
 			}
-			locked := item.col.id == "PR"
+			locked := item.id == "PR"
 			var check, label string
 			arrow := "  "
-			if item.col.id == m.sortBy && m.sortBy != "" {
+			if item.id == m.sortBy && m.sortBy != "" {
 				if m.sortDesc {
 					arrow = "↓ "
 				} else {
@@ -566,17 +503,17 @@ func (m Model) View() tea.View {
 			}
 			if locked {
 				check = styleMuted.Render("[x]")
-				label = styleMuted.Render(arrow + item.col.header)
-			} else if activeSet[item.col.id] {
+				label = styleMuted.Render(arrow + item.header)
+			} else if activeSet[item.id] {
 				check = styleGreen.Render("[x]")
 				if arrow != "  " {
-					label = styleGreen.Render(arrow + item.col.header)
+					label = styleGreen.Render(arrow + item.header)
 				} else {
-					label = styleMuted.Render(arrow) + item.col.header
+					label = styleMuted.Render(arrow) + item.header
 				}
 			} else {
 				check = styleMuted.Render("[ ]")
-				label = styleMuted.Render(arrow + item.col.header)
+				label = styleMuted.Render(arrow + item.header)
 			}
 			leftLines = append(leftLines, fmt.Sprintf("%s%s  %s", cursor, check, label))
 		}
@@ -840,6 +777,15 @@ func (m *Model) sortRows() {
 	})
 }
 
+func (m Model) currentConfig() state.Config {
+	return state.Config{
+		Columns:      columnIDs(m.columns),
+		SortBy:       m.sortBy,
+		SortDesc:     m.sortDesc,
+		PollInterval: int(m.pollInterval.Seconds()),
+	}
+}
+
 func columnIDs(cols []columnDef) []string {
 	ids := make([]string, len(cols))
 	for i, c := range cols {
@@ -850,89 +796,50 @@ func columnIDs(cols []columnDef) []string {
 
 const varColMinWidth = 10
 
-// naturalAllWidths returns the max plain-text content width for every visible
-// column by scanning all rows. Widths are content-only (no padding).
+// naturalAllWidths returns the max content width for every visible column (no padding).
 func (m Model) naturalAllWidths() map[string]int {
 	widths := map[string]int{}
 	for _, col := range m.columns {
 		widths[col.id] = len(col.header)
 	}
 
-	statusWidths := map[string]int{
-		"CLEAN": 5, "DIRTY": 8, "BLOCKED": 7, "BEHIND": 6, "UNSTABLE": 8, "DRAFT": 5,
+	setMax := func(key string, n int) {
+		if cur, ok := widths[key]; ok && n > cur {
+			widths[key] = n
+		}
 	}
 
 	for _, row := range m.rows {
-		if _, ok := widths["PR"]; ok {
-			if n := len(fmt.Sprintf("%d", row.watch.PR)); n > widths["PR"] {
-				widths["PR"] = n
-			}
-		}
+		setMax("PR", len(fmt.Sprintf("%d", row.watch.PR)))
 		r := row.result
 		if r == nil {
 			continue
 		}
-		if _, ok := widths["STATUS"]; ok {
-			var labelW int
-			switch r.PR.State {
-			case "MERGED", "CLOSED":
-				labelW = 6
-			default:
-				labelW = statusWidths[r.PR.MergeStateStatus]
-			}
-			if row.state == rowError {
-				labelW = 5
-			}
-			if labelW > widths["STATUS"] {
-				widths["STATUS"] = labelW
-			}
+		label := mergeStatusLabel(r, false)
+		if row.state == rowError {
+			label = "error"
 		}
-		if _, ok := widths["CHECKS"]; ok {
-			s := fmt.Sprintf("%d/%d/%d", r.PassedChecks, r.RunningChecks, r.FailedChecks)
-			if n := len(s); n > widths["CHECKS"] {
-				widths["CHECKS"] = n
-			}
-		}
-		if _, ok := widths["REVIEWS"]; ok {
-			s := fmt.Sprintf("%d/%d/%d", r.ApprovedReviews, r.PendingReviews, r.ChangesReviews)
-			if n := len(s); n > widths["REVIEWS"] {
-				widths["REVIEWS"] = n
-			}
-		}
-		if _, ok := widths["TITLE"]; ok {
-			if n := len([]rune(r.PR.Title)); n > widths["TITLE"] {
-				widths["TITLE"] = n
-			}
-		}
-		if _, ok := widths["AUTHOR"]; ok {
-			if n := len([]rune(r.PR.Author)); n > widths["AUTHOR"] {
-				widths["AUTHOR"] = n
-			}
-		}
-		if _, ok := widths["BASE"]; ok {
-			if n := len([]rune(r.PR.BaseRefName)); n > widths["BASE"] {
-				widths["BASE"] = n
-			}
-		}
+		setMax("STATUS", lipgloss.Width(label))
+		setMax("CHECKS", len(fmt.Sprintf("%d/%d/%d", r.PassedChecks, r.RunningChecks, r.FailedChecks)))
+		setMax("REVIEWS", len(fmt.Sprintf("%d/%d/%d", r.ApprovedReviews, r.PendingReviews, r.ChangesReviews)))
+		setMax("TITLE", utf8.RuneCountInString(r.PR.Title))
+		setMax("AUTHOR", utf8.RuneCountInString(r.PR.Author))
+		setMax("BASE", utf8.RuneCountInString(r.PR.BaseRefName))
 	}
 	return widths
 }
 
-// effectiveVarWidths returns the truncation limit for each visible variable column
-// (TITLE, AUTHOR, BASE). If all content fits within the terminal, natural widths
-// are returned unchanged. Otherwise space is distributed proportionally
-// (TITLE 3x, AUTHOR 1x, BASE 1x) with a varColMinWidth floor, and surplus from
-// columns that don't need their allocation is redistributed to those that do.
+// effectiveVarWidths returns truncation limits for TITLE/AUTHOR/BASE, distributing
+// available space proportionally (3x/1x/1x) when content would overflow the terminal.
 func (m Model) effectiveVarWidths() map[string]int {
 	allNatural := m.naturalAllWidths()
 
-	varIDs := map[string]bool{"TITLE": true, "AUTHOR": true, "BASE": true}
 	weights := map[string]int{"TITLE": 3, "AUTHOR": 1, "BASE": 1}
 
 	natural := map[string]int{}
 	fixedTotal := 0
 	for id, w := range allNatural {
-		if varIDs[id] {
+		if _, ok := weights[id]; ok {
 			natural[id] = w
 		} else {
 			fixedTotal += w + 2

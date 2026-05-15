@@ -17,6 +17,16 @@ type State struct {
 	Watches []Watch `json:"watches"`
 }
 
+// Config holds user preferences persisted to config.json.
+type Config struct {
+	Columns      []string `json:"columns,omitempty"`
+	SortBy       string   `json:"sortBy,omitempty"`
+	SortDesc     bool     `json:"sortDesc,omitempty"`
+	PollInterval int      `json:"pollInterval,omitempty"` // seconds
+}
+
+var DefaultColumns = []string{"PR", "STATUS", "AUTOMERGE", "TITLE", "REVIEWS", "CHECKS", "UPDATED"}
+
 func configDir() (string, error) {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
@@ -29,34 +39,31 @@ func configDir() (string, error) {
 	return filepath.Join(base, "gh-watch"), nil
 }
 
-func configPath() (string, error) {
+func appFilePath(name string) (string, error) {
 	dir, err := configDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "state.json"), nil
+	return filepath.Join(dir, name), nil
 }
 
-// Config holds user preferences persisted to config.json.
-type Config struct {
-	Columns      []string `json:"columns,omitempty"`
-	SortBy       string   `json:"sortBy,omitempty"`
-	SortDesc     bool     `json:"sortDesc,omitempty"`
-	PollInterval int      `json:"pollInterval,omitempty"` // seconds, default 60
-}
-
-var DefaultColumns = []string{"PR", "STATUS", "AUTOMERGE", "TITLE", "REVIEWS", "CHECKS", "UPDATED"}
-
-func configFilePath() (string, error) {
-	dir, err := configDir()
-	if err != nil {
-		return "", err
+func writeJSONFile(path string, v any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
 	}
-	return filepath.Join(dir, "config.json"), nil
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func LoadConfig() (Config, error) {
-	path, err := configFilePath()
+	path, err := appFilePath("config.json")
 	if err != nil {
 		return Config{}, err
 	}
@@ -81,26 +88,15 @@ func LoadConfig() (Config, error) {
 }
 
 func SaveConfig(c Config) error {
-	path, err := configFilePath()
+	path, err := appFilePath("config.json")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeJSONFile(path, c)
 }
 
 func Load() (*State, error) {
-	path, err := configPath()
+	path, err := appFilePath("state.json")
 	if err != nil {
 		return nil, err
 	}
@@ -119,22 +115,11 @@ func Load() (*State, error) {
 }
 
 func (s *State) Save() error {
-	path, err := configPath()
+	path, err := appFilePath("state.json")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeJSONFile(path, s)
 }
 
 func (s *State) Add(pr int, repo string, autoMerge bool) {
