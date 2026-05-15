@@ -118,7 +118,7 @@ Press `s` to open the settings overlay. From there you can:
 - **Poll interval** — choose from 15s / 30s / 1m / 2m / 5m / 15m / 1h (`space`
   to select)
 - **Columns** — toggle visibility with `space`; reorder visible columns with
-  `shift+↑/↓`
+  `j`/`k`
 - **Sort** — press `s` on any sortable column to cycle ascending → descending →
   off
 

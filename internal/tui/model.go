@@ -262,14 +262,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case modeSettings:
 			colItems := settingsColumnItems(m)
-			switch msg.String() {
+			switch msg.Keystroke() {
 			case "esc":
 				m.mode = modeNormal
 			case "left", "h":
 				m.settingsPanel = 0
 			case "right", "l":
 				m.settingsPanel = 1
-			case "up", "k":
+			case "up":
 				if m.settingsPanel == 1 {
 					if m.intervalCursor > 0 {
 						m.intervalCursor--
@@ -279,7 +279,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.pickerCursor--
 					}
 				}
-			case "down", "j":
+			case "down":
 				if m.settingsPanel == 1 {
 					if m.intervalCursor < len(intervalOptions)-1 {
 						m.intervalCursor++
@@ -333,7 +333,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sortRows()
 				cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc, PollInterval: int(m.pollInterval.Seconds())}
 				return m, saveConfigCmd(cfg)
-			case "shift+up":
+			case "k":
 				if m.settingsPanel != 0 {
 					break
 				}
@@ -355,7 +355,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pickerCursor--
 				cfg := state.Config{Columns: columnIDs(m.columns), SortBy: m.sortBy, SortDesc: m.sortDesc, PollInterval: int(m.pollInterval.Seconds())}
 				return m, saveConfigCmd(cfg)
-			case "shift+down":
+			case "j":
 				if m.settingsPanel != 0 {
 					break
 				}
@@ -646,10 +646,11 @@ func (m Model) View() tea.View {
 					}
 					return s
 				})
+			varWidths := m.effectiveVarWidths()
 			for i, row := range m.rows {
 				cells := make([]string, len(m.columns))
 				for j, col := range m.columns {
-					cells[j] = m.cellValue(row, col, i == m.cursor)
+					cells[j] = m.cellValue(row, col, i == m.cursor, varWidths)
 				}
 				tbl = tbl.Row(cells...)
 			}
@@ -671,7 +672,7 @@ func (m Model) View() tea.View {
 		}
 		footer.WriteString("\n" + styleHelp.Render("[enter] confirm  [esc] cancel"))
 	case modeSettings:
-		footer.WriteString(styleHelp.Render("[space] select/toggle  [s] sort  [shift+↑/↓] reorder  [←/→] switch panel  [esc] close"))
+		footer.WriteString(styleHelp.Render("[space] select/toggle  [s] sort  [j/k] reorder  [←/→] switch panel  [esc] close"))
 	default:
 		footer.WriteString(styleHelp.Render("[↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [o] open  [r] refresh  [s] settings  [q] quit"))
 	}
@@ -687,7 +688,7 @@ func (m Model) View() tea.View {
 	return v
 }
 
-func (m Model) cellValue(row watchRow, col columnDef, selected bool) string {
+func (m Model) cellValue(row watchRow, col columnDef, selected bool, varWidths map[string]int) string {
 	prevMerged := row.result != nil && row.result.PR.State == "MERGED"
 	prevClosed := row.result != nil && row.result.PR.State == "CLOSED"
 	dim := row.state == rowMerged || row.state == rowClosed ||
@@ -734,7 +735,7 @@ func (m Model) cellValue(row watchRow, col columnDef, selected bool) string {
 			}
 			return ""
 		}
-		title := truncate(r.PR.Title, m.titleMaxWidth())
+		title := truncate(r.PR.Title, varWidths["TITLE"])
 		if dim {
 			return styleMuted.Render(title)
 		}
@@ -744,19 +745,21 @@ func (m Model) cellValue(row watchRow, col columnDef, selected bool) string {
 		if r == nil {
 			return ""
 		}
+		author := truncate(r.PR.Author, varWidths["AUTHOR"])
 		if dim {
-			return styleMuted.Render(r.PR.Author)
+			return styleMuted.Render(author)
 		}
-		return r.PR.Author
+		return author
 
 	case "BASE":
 		if r == nil {
 			return ""
 		}
+		base := truncate(r.PR.BaseRefName, varWidths["BASE"])
 		if dim {
-			return styleMuted.Render(r.PR.BaseRefName)
+			return styleMuted.Render(base)
 		}
-		return r.PR.BaseRefName
+		return base
 
 	case "REVIEWS":
 		if r == nil {
@@ -845,15 +848,179 @@ func columnIDs(cols []columnDef) []string {
 	return ids
 }
 
-func (m Model) titleMaxWidth() int {
-	if m.width <= 0 {
-		return 60
+const varColMinWidth = 10
+
+// naturalAllWidths returns the max plain-text content width for every visible
+// column by scanning all rows. Widths are content-only (no padding).
+func (m Model) naturalAllWidths() map[string]int {
+	widths := map[string]int{}
+	for _, col := range m.columns {
+		widths[col.id] = len(col.header)
 	}
-	max := m.width - 70
-	if max < 20 {
-		max = 20
+
+	statusWidths := map[string]int{
+		"CLEAN": 5, "DIRTY": 8, "BLOCKED": 7, "BEHIND": 6, "UNSTABLE": 8, "DRAFT": 5,
 	}
-	return max
+
+	for _, row := range m.rows {
+		if _, ok := widths["PR"]; ok {
+			if n := len(fmt.Sprintf("%d", row.watch.PR)); n > widths["PR"] {
+				widths["PR"] = n
+			}
+		}
+		r := row.result
+		if r == nil {
+			continue
+		}
+		if _, ok := widths["STATUS"]; ok {
+			var labelW int
+			switch r.PR.State {
+			case "MERGED", "CLOSED":
+				labelW = 6
+			default:
+				labelW = statusWidths[r.PR.MergeStateStatus]
+			}
+			if row.state == rowError {
+				labelW = 5
+			}
+			if labelW > widths["STATUS"] {
+				widths["STATUS"] = labelW
+			}
+		}
+		if _, ok := widths["CHECKS"]; ok {
+			s := fmt.Sprintf("%d/%d/%d", r.PassedChecks, r.RunningChecks, r.FailedChecks)
+			if n := len(s); n > widths["CHECKS"] {
+				widths["CHECKS"] = n
+			}
+		}
+		if _, ok := widths["REVIEWS"]; ok {
+			s := fmt.Sprintf("%d/%d/%d", r.ApprovedReviews, r.PendingReviews, r.ChangesReviews)
+			if n := len(s); n > widths["REVIEWS"] {
+				widths["REVIEWS"] = n
+			}
+		}
+		if _, ok := widths["TITLE"]; ok {
+			if n := len([]rune(r.PR.Title)); n > widths["TITLE"] {
+				widths["TITLE"] = n
+			}
+		}
+		if _, ok := widths["AUTHOR"]; ok {
+			if n := len([]rune(r.PR.Author)); n > widths["AUTHOR"] {
+				widths["AUTHOR"] = n
+			}
+		}
+		if _, ok := widths["BASE"]; ok {
+			if n := len([]rune(r.PR.BaseRefName)); n > widths["BASE"] {
+				widths["BASE"] = n
+			}
+		}
+	}
+	return widths
+}
+
+// effectiveVarWidths returns the truncation limit for each visible variable column
+// (TITLE, AUTHOR, BASE). If all content fits within the terminal, natural widths
+// are returned unchanged. Otherwise space is distributed proportionally
+// (TITLE 3x, AUTHOR 1x, BASE 1x) with a varColMinWidth floor, and surplus from
+// columns that don't need their allocation is redistributed to those that do.
+func (m Model) effectiveVarWidths() map[string]int {
+	allNatural := m.naturalAllWidths()
+
+	varIDs := map[string]bool{"TITLE": true, "AUTHOR": true, "BASE": true}
+	weights := map[string]int{"TITLE": 3, "AUTHOR": 1, "BASE": 1}
+
+	natural := map[string]int{}
+	fixedTotal := 0
+	for id, w := range allNatural {
+		if varIDs[id] {
+			natural[id] = w
+		} else {
+			fixedTotal += w + 2
+		}
+	}
+
+	if len(natural) == 0 || m.width <= 0 {
+		return natural
+	}
+
+	totalNatural := fixedTotal
+	for _, w := range natural {
+		totalNatural += w + 2
+	}
+	if totalNatural <= m.width {
+		return natural // everything fits; no truncation needed
+	}
+
+	totalWeight := 0
+	for id := range natural {
+		totalWeight += weights[id]
+	}
+
+	budget := m.width - fixedTotal - (varColMinWidth+2)*len(natural)
+	if budget < 0 {
+		budget = 0
+	}
+
+	result := map[string]int{}
+	for id := range natural {
+		result[id] = varColMinWidth + budget*weights[id]/totalWeight
+	}
+
+	// Redistribute surplus from columns that don't need their full allocation.
+	for range natural {
+		freed := 0
+		saturated := map[string]bool{}
+		for id, nat := range natural {
+			if nat < result[id] {
+				freed += result[id] - nat
+				result[id] = nat
+				saturated[id] = true
+			}
+		}
+		if freed == 0 {
+			break
+		}
+		needWeight := 0
+		for id := range natural {
+			if !saturated[id] && natural[id] > result[id] {
+				needWeight += weights[id]
+			}
+		}
+		if needWeight == 0 {
+			break
+		}
+		for id := range natural {
+			if !saturated[id] && natural[id] > result[id] {
+				result[id] += freed * weights[id] / needWeight
+			}
+		}
+	}
+
+	// Assign any leftover space (from integer division) in weight order.
+	totalUsed := fixedTotal
+	for _, w := range result {
+		totalUsed += w + 2
+	}
+	leftover := m.width - totalUsed
+	for _, id := range []string{"TITLE", "AUTHOR", "BASE"} {
+		if leftover <= 0 {
+			break
+		}
+		if _, ok := result[id]; !ok {
+			continue
+		}
+		add := natural[id] - result[id]
+		if add <= 0 {
+			continue
+		}
+		if add > leftover {
+			add = leftover
+		}
+		result[id] += add
+		leftover -= add
+	}
+
+	return result
 }
 
 func mergeStatusLabel(r *gh.PollResult, selected bool) string {
@@ -918,9 +1085,9 @@ func checksLabel(r *gh.PollResult, selected bool) string {
 
 func sepWithBg(selected bool) string {
 	if !selected {
-		return "/"
+		return styleMuted.Render("/")
 	}
-	return lipgloss.NewStyle().Background(selectedBg).Render("/")
+	return styleMuted.Background(selectedBg).Render("/")
 }
 
 func coloredCount(n int, style lipgloss.Style, selected bool) string {
