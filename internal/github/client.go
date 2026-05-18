@@ -19,6 +19,7 @@ type PRStatus struct {
 	MergeStateStatus string `json:"mergeStateStatus"`
 	Author           string
 	BaseRefName      string `json:"baseRefName"`
+	HeadRefName      string `json:"headRefName"`
 }
 
 type PollResult struct {
@@ -45,6 +46,7 @@ type prResponsePR struct {
 	ReviewDecision   string `json:"reviewDecision"`
 	MergeStateStatus string `json:"mergeStateStatus"`
 	BaseRefName      string `json:"baseRefName"`
+	HeadRefName      string `json:"headRefName"`
 	Author           struct {
 		Login string `json:"login"`
 	} `json:"author"`
@@ -75,7 +77,7 @@ type prResponsePR struct {
 }
 
 const prFieldsQuery = `
-      id number title state reviewDecision mergeStateStatus baseRefName
+      id number title state reviewDecision mergeStateStatus baseRefName headRefName
       author { login }
       latestReviews(first: 50) { nodes { state } }
       reviewRequests(first: 50) { totalCount }
@@ -107,6 +109,7 @@ func parsePollResult(pr prResponsePR) *PollResult {
 			MergeStateStatus: pr.MergeStateStatus,
 			Author:           pr.Author.Login,
 			BaseRefName:      pr.BaseRefName,
+			HeadRefName:      pr.HeadRefName,
 		},
 		PendingReviews: pr.ReviewRequests.TotalCount,
 	}

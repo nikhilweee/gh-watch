@@ -80,6 +80,7 @@ The dashboard shows a configurable set of columns. Available columns:
 | `AUTOMERGE` | Auto-merge status           | ✓       |
 | `TITLE`     | PR title                    | ✓       |
 | `AUTHOR`    | PR author                   |         |
+| `HEAD`      | Source branch name          |         |
 | `BASE`      | Target branch name          |         |
 | `REVIEWS`   | Review counts (see below)   | ✓       |
 | `CHECKS`    | CI check counts (see below) | ✓       |
@@ -118,7 +119,7 @@ Press `s` to open the settings overlay. From there you can:
 - **Poll interval** — choose from 15s / 30s / 1m / 2m / 5m / 15m / 1h (`space`
   to select)
 - **Columns** — toggle visibility with `space`; reorder visible columns with
-  `j`/`k`
+  `<`/`>`
 - **Sort** — press `s` on any sortable column to cycle ascending → descending →
   off
 

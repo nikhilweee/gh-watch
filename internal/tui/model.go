@@ -49,6 +49,7 @@ var allColumns = []columnDef{
 	{"AUTOMERGE", "AUTOMERGE", true},
 	{"TITLE", "TITLE", true},
 	{"AUTHOR", "AUTHOR", true},
+	{"HEAD", "HEAD", true},
 	{"BASE", "BASE", true},
 	{"REVIEWS", "REVIEWS", true},
 	{"CHECKS", "CHECKS", true},
@@ -230,7 +231,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.settingsPanel = 0
 			case "right", "l":
 				m.settingsPanel = 1
-			case "up":
+			case "up", "k":
 				if m.settingsPanel == 1 {
 					if m.intervalCursor > 0 {
 						m.intervalCursor--
@@ -240,7 +241,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.pickerCursor--
 					}
 				}
-			case "down":
+			case "down", "j":
 				if m.settingsPanel == 1 {
 					if m.intervalCursor < len(intervalOptions)-1 {
 						m.intervalCursor++
@@ -291,7 +292,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.sortRows()
 				return m, saveConfigCmd(m.currentConfig())
-			case "k", "j":
+			case "<", ">":
 				if m.settingsPanel != 0 {
 					break
 				}
@@ -304,7 +305,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				delta := 1
-				if msg.Keystroke() == "k" {
+				if msg.Keystroke() == "<" {
 					delta = -1
 				}
 				newPos := pos + delta
@@ -609,7 +610,7 @@ func (m Model) View() tea.View {
 		}
 		footer.WriteString("\n" + styleHelp.Render("[enter] confirm  [esc] cancel"))
 	case modeSettings:
-		footer.WriteString(styleHelp.Render("[space] select/toggle  [s] sort  [j/k] reorder  [←/→] switch panel  [esc] close"))
+		footer.WriteString(styleHelp.Render("[space] select/toggle  [s] sort  [</>] reorder  [←/→] switch panel  [esc] close"))
 	default:
 		footer.WriteString(styleHelp.Render("[↑/↓] navigate  [a] add  [x] remove  [m] auto-merge  [o] open  [r] refresh  [s] settings  [q] quit"))
 	}
@@ -688,6 +689,16 @@ func (m Model) cellValue(row watchRow, col columnDef, selected bool, varWidths m
 		}
 		return author
 
+	case "HEAD":
+		if r == nil {
+			return ""
+		}
+		head := truncate(r.PR.HeadRefName, varWidths["HEAD"])
+		if dim {
+			return styleMuted.Render(head)
+		}
+		return head
+
 	case "BASE":
 		if r == nil {
 			return ""
@@ -761,6 +772,8 @@ func (m *Model) sortRows() {
 			less = ri.PR.Title < rj.PR.Title
 		case "AUTHOR":
 			less = ri.PR.Author < rj.PR.Author
+		case "HEAD":
+			less = ri.PR.HeadRefName < rj.PR.HeadRefName
 		case "BASE":
 			less = ri.PR.BaseRefName < rj.PR.BaseRefName
 		case "REVIEWS":
@@ -824,6 +837,7 @@ func (m Model) naturalAllWidths() map[string]int {
 		setMax("REVIEWS", len(fmt.Sprintf("%d/%d/%d", r.ApprovedReviews, r.PendingReviews, r.ChangesReviews)))
 		setMax("TITLE", utf8.RuneCountInString(r.PR.Title))
 		setMax("AUTHOR", utf8.RuneCountInString(r.PR.Author))
+		setMax("HEAD", utf8.RuneCountInString(r.PR.HeadRefName))
 		setMax("BASE", utf8.RuneCountInString(r.PR.BaseRefName))
 	}
 	return widths
@@ -834,7 +848,7 @@ func (m Model) naturalAllWidths() map[string]int {
 func (m Model) effectiveVarWidths() map[string]int {
 	allNatural := m.naturalAllWidths()
 
-	weights := map[string]int{"TITLE": 3, "AUTHOR": 1, "BASE": 1}
+	weights := map[string]int{"TITLE": 3, "AUTHOR": 1, "HEAD": 1, "BASE": 1}
 
 	natural := map[string]int{}
 	fixedTotal := 0
@@ -909,7 +923,7 @@ func (m Model) effectiveVarWidths() map[string]int {
 		totalUsed += w + 2
 	}
 	leftover := m.width - totalUsed
-	for _, id := range []string{"TITLE", "AUTHOR", "BASE"} {
+	for _, id := range []string{"TITLE", "AUTHOR", "HEAD", "BASE"} {
 		if leftover <= 0 {
 			break
 		}
